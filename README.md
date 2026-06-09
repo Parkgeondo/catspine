@@ -73,6 +73,28 @@ NODE_ENV=production SCORE_SECRET=... npm start
 
 `.env.example` 참고. HTTPS 종단(리버스 프록시)을 두는 것을 권장합니다.
 
+## GitHub Pages 배포
+
+이 저장소에는 `client/` 폴더를 GitHub Pages로 자동 배포하는 워크플로
+([.github/workflows/deploy.yml](.github/workflows/deploy.yml))가 들어 있어요.
+
+1. GitHub 저장소 → **Settings → Pages → Build and deployment → Source** 를
+   **GitHub Actions** 로 설정 (최초 1회).
+2. `main` 에 푸시하면 자동 배포됩니다. 주소: `https://parkgeondo.github.io/catspine/`
+
+> **중요:** GitHub Pages는 정적 파일만 호스팅하므로 **Node 랭킹 서버는 동작하지 않아요.**
+> 백엔드에 연결되지 않으면 게임은 정상 작동하되, 랭킹은 자동으로 **이 기기 로컬 기록
+> (localStorage)** 으로 전환됩니다(다이얼로그에 안내 문구 표시).
+>
+> 온라인 공용 랭킹까지 쓰려면 `server/`를 별도 호스트(Render, Railway, Fly.io, VPS 등)에
+> 배포하고, `client/index.html`의 `<head>`에 백엔드 주소를 지정하세요:
+>
+> ```html
+> <script>window.CAT_API_BASE = 'https://your-backend.example.com';</script>
+> ```
+>
+> 이때 서버의 CORS 허용 오리진에 Pages 도메인을 추가해야 합니다.
+
 ## 진짜 고양이 모델로 교체하기
 
 `tools/make-cats.js`가 만든 GLB는 “임의의” 저폴리 자리표시자예요.
