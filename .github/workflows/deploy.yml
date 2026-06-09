@@ -28,6 +28,9 @@ jobs:
         uses: actions/checkout@v4
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          # 저장소에 Pages가 아직 안 켜져 있으면 자동으로 활성화 시도
+          enablement: true
       - name: Upload client as Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
