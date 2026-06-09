@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#1b1530" />
+    <title>고양이 돌리기 🐱</title>
+    <link rel="stylesheet" href="style.css" />
+    <!-- Three.js via import map (no build step). Pinned version for integrity. -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <!-- Live region for screen readers: announces score & cat mood -->
+    <div id="sr-live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+    <header class="hud">
+      <div class="score-box" role="status" aria-label="현재 점수">
+        <span class="score-label">점수</span>
+        <span id="score" class="score-value">0</span>
+      </div>
+      <button id="rank-open" class="ghost-btn" type="button" aria-haspopup="dialog">
+        🏆 랭킹
+      </button>
+    </header>
+
+    <!-- 3D canvas mount -->
+    <main id="stage" aria-label="고양이 무대">
+      <div id="loading" class="overlay-msg">고양이를 부르는 중… 🐈</div>
+    </main>
+
+    <!-- Big accessible spin button (also: tap canvas / Space / Enter) -->
+    <div class="action-bar">
+      <p id="mood" class="mood" aria-live="polite">고양이를 한 번 돌려보세요!</p>
+      <button id="spin" class="spin-btn" type="button" aria-describedby="mood">
+        🌀 돌리기
+      </button>
+    </div>
+
+    <!-- Cat picker -->
+    <nav class="cat-picker" aria-label="고양이 종류 선택">
+      <ul id="cat-list" role="radiogroup" aria-label="고양이 종류"></ul>
+    </nav>
+
+    <!-- Ranking dialog -->
+    <dialog id="rank-dialog" aria-labelledby="rank-title">
+      <form method="dialog" class="rank-head">
+        <h2 id="rank-title">🏆 랭킹</h2>
+        <button class="close-btn" value="close" aria-label="닫기">✕</button>
+      </form>
+
+      <section id="submit-section" class="submit-section">
+        <p class="submit-hint">
+          닉네임은 <strong>랭킹 등록 시에만</strong> 사용돼요. 안 올려도 게임은 그대로 즐길 수 있어요.
+        </p>
+        <form id="submit-form" class="submit-form">
+          <label for="nickname">닉네임 (2~12자)</label>
+          <div class="submit-row">
+            <input
+              id="nickname"
+              name="nickname"
+              type="text"
+              maxlength="12"
+              autocomplete="off"
+              inputmode="text"
+              placeholder="예: 집사123"
+              aria-describedby="submit-error"
+            />
+            <button id="submit-score" type="submit">내 점수 등록</button>
+          </div>
+          <p id="submit-error" class="submit-error" role="alert"></p>
+        </form>
+      </section>
+
+      <ol id="rank-list" class="rank-list" aria-label="상위 랭킹"></ol>
+    </dialog>
+
+    <script type="module" src="main.js"></script>
+  </body>
+</html>
