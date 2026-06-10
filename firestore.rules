@@ -19,11 +19,12 @@ service cloud.firestore {
 
     function isValidScore(d) {
       return d.keys().hasOnly(['nickname', 'score', 'catId', 'createdAt'])
-        // 닉네임: 2~12자, 한글/영문/숫자/_-. 공백만
+        // 닉네임: 문자열, 2~12자
+        // (한글/영문/숫자 등 형식 검증은 클라이언트에서 하고, 출력은 textContent라
+        //  XSS 위험이 없음. 규칙 matches()는 유니코드 \p{L}을 못 받아 제외함)
         && d.nickname is string
         && d.nickname.size() >= 2
         && d.nickname.size() <= 12
-        && d.nickname.matches('^[\\p{L}\\p{N}_. -]+$')
         // 점수: 1~100000 정수
         && d.score is int
         && d.score >= 1
