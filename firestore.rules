@@ -1,0 +1,37 @@
+rules_version = '2';
+
+// 서버 없이 클라이언트가 Firestore에 직접 쓰기 때문에, 모든 검증을 이 규칙으로 강제한다.
+// Firebase 콘솔 → Firestore Database → Rules 에 붙여넣고 "게시(Publish)" 하세요.
+// (또는 firebase CLI: firebase deploy --only firestore:rules)
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /scores/{id} {
+      // 랭킹은 누구나 읽을 수 있음
+      allow read: if true;
+
+      // 생성만 허용 — 형식/범위를 엄격히 검증
+      allow create: if isValidScore(request.resource.data);
+
+      // 한번 올린 기록은 수정·삭제 불가 (점수 조작/타인 기록 변경 차단)
+      allow update, delete: if false;
+    }
+
+    function isValidScore(d) {
+      return d.keys().hasOnly(['nickname', 'score', 'catId', 'createdAt'])
+        // 닉네임: 2~12자, 한글/영문/숫자/_-. 공백만
+        && d.nickname is string
+        && d.nickname.size() >= 2
+        && d.nickname.size() <= 12
+        && d.nickname.matches('^[\\p{L}\\p{N}_. -]+$')
+        // 점수: 1~100000 정수
+        && d.score is int
+        && d.score >= 1
+        && d.score <= 100000
+        // 고양이 종류는 화이트리스트만
+        && d.catId in ['cheese', 'tuxedo', 'gray', 'calico']
+        // 생성 시각은 서버 시간으로 강제 (임의 타임스탬프 차단)
+        && d.createdAt == request.time;
+    }
+  }
+}

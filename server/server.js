@@ -52,15 +52,18 @@ app.use(
       useDefaults: true,
       directives: {
         defaultSrc: ["'self'"],
-        // module imports for three.js come from unpkg; importmap uses the nonce
+        // module imports: three.js from unpkg, Firebase SDK from gstatic;
+        // the inline importmap is allowed via the per-request nonce
         scriptSrc: [
           "'self'",
           'https://unpkg.com',
+          'https://www.gstatic.com',
           (req, res) => `'nonce-${res.locals.nonce}'`,
         ],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:'],
-        connectSrc: ["'self'"],
+        // Firestore is reached directly from the browser (googleapis.com)
+        connectSrc: ["'self'", 'https://*.googleapis.com', 'https://firestore.googleapis.com'],
         workerSrc: ["'self'", 'blob:'],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],

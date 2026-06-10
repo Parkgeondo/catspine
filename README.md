@@ -95,6 +95,37 @@ NODE_ENV=production SCORE_SECRET=... npm start
 >
 > 이때 서버의 CORS 허용 오리진에 Pages 도메인을 추가해야 합니다.
 
+## Firebase 온라인 랭킹 (서버 없이 무료)
+
+GitHub Pages 같은 정적 호스팅에서 **공용 랭킹**을 쓰려면 Firebase Firestore를
+이용해요. 클라이언트가 Firestore에 직접 읽고 쓰므로 **별도 서버가 필요 없습니다.**
+([client/firebase.js](client/firebase.js), [client/firebase-config.js](client/firebase-config.js))
+
+랭킹 백엔드는 **자동 선택**돼요: `Firestore(준비됨) → Node 서버 → 로컬(localStorage)`.
+Firestore가 아직 준비되지 않으면 자동으로 로컬 기록을 쓰다가, 설정을 마치면 다음 접속부터
+자동으로 공용 랭킹으로 올라갑니다.
+
+### 설정 (한 번만, Firebase 콘솔)
+
+1. **Firestore Database 생성**: 콘솔 → Build → Firestore Database → *데이터베이스 만들기* →
+   위치 선택 → *프로덕션 모드*로 시작.
+2. **보안 규칙 게시**: Firestore → Rules 탭에 [firestore.rules](firestore.rules) 내용을
+   붙여넣고 *게시(Publish)*. (닉네임·점수 범위·고양이 종류를 서버단에서 강제해요.)
+3. 끝! `client/firebase-config.js`에는 이미 이 프로젝트 설정이 들어 있어요.
+
+> 웹 `apiKey`는 비밀이 아니라 공개 식별자라서 커밋해도 안전합니다. 실제 보안은
+> Firestore 규칙으로 겁니다.
+
+### 더 단단히 (선택) — App Check
+
+봇·외부 스크립트의 직접 쓰기를 막으려면 **App Check(reCAPTCHA v3)** 를 권장해요.
+콘솔 → App Check에서 reCAPTCHA를 등록하고, 사이트 키로 `client/firebase.js`의 `initFirebase`
+에 App Check 초기화를 추가하면 됩니다(무료).
+
+> ⚠️ 서버가 없으므로 **시간 기반 정밀 안티치트**(경과 시간 대비 점수 검증)는 적용되지
+> 않아요. 그 수준이 필요하면 Cloud Functions(Blaze 요금제)로 검증 로직을 옮기거나,
+> 기존 `server/`를 별도 호스트에 띄우고 `window.CAT_API_BASE`로 연결하세요.
+
 ## 진짜 고양이 모델로 교체하기
 
 `tools/make-cats.js`가 만든 GLB는 “임의의” 저폴리 자리표시자예요.
