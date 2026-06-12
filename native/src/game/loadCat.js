@@ -1,5 +1,7 @@
 import { Asset } from 'expo-asset';
-import * as FileSystem from 'expo-file-system';
+// SDK 54 moved the classic read API (readAsStringAsync/EncodingType) to the
+// /legacy entry; the new File API replaces it at the package root.
+import * as FileSystem from 'expo-file-system/legacy';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 // Bundled models. Metro turns each require() into an asset we can resolve to a

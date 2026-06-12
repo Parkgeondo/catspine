@@ -1,8 +1,8 @@
 import { registerRootComponent } from 'expo';
 import App from './App';
 
-// expo-three patches THREE globals (TextDecoder, atob, etc.) used by GLTFLoader.
-// Importing it once at startup is enough; keep this above any THREE usage.
-import 'expo-three';
+// GLTFLoader decodes the glTF JSON chunk with TextDecoder, which Hermes (RN
+// 0.81 / SDK 54) provides natively — no expo-three polyfill needed. If a future
+// runtime lacks it, add a TextDecoder polyfill here before any THREE usage.
 
 registerRootComponent(App);

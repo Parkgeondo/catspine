@@ -12,22 +12,24 @@
 
 ```bash
 cd native
-npm install          # 또는: npx expo install (버전 자동 정합)
-npx expo start       # QR 코드 → Expo Go 앱으로 실기기 실행
+npm install
+npx expo install --fix   # SDK 54에 맞는 정확한 패키지 버전으로 정합
+npx expo start           # QR 코드 → Expo Go 앱으로 실기기 실행
 ```
 
 - **시뮬레이터**: `npx expo start` 후 `i`(iOS) / `a`(Android).
 - 3D(expo-gl)는 **Expo Go에서도 동작**하지만, 상점 배포용 빌드는 아래 EAS를 씁니다.
 
-> 처음 `npm install`은 정확한 버전 정합을 위해 `npx expo install`로 한 번 더 맞추는 걸
-> 권장해요. `package.json`의 버전은 Expo SDK 52 기준입니다.
+> `package.json`은 **Expo SDK 54**(React 19.1 / RN 0.81) 기준입니다. 일부 expo-*
+> 패키지 버전 범위는 근삿값이라, 설치 후 `npx expo install --fix`로 SDK에 맞는 정확한
+> 버전으로 한 번 맞춰주세요.
 
 ## 구조
 
 ```
 native/
   App.js                  화면 조립: HUD·돌리기 버튼·고양이 칩·랭킹 모달
-  index.js                진입점 (expo-three 전역 패치 포함)
+  index.js                진입점 (registerRootComponent)
   app.json                Expo 설정 (번들 ID, 아이콘 등)
   metro.config.js         .glb 를 에셋으로 인식시키는 설정
   src/
