@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "고양이 돌리기",
+    "slug": "catspin",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "catspin",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#14102a"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.catspine.app"
+    },
+    "android": {
+      "package": "com.catspine.app"
+    },
+    "web": {}
+  }
+}
