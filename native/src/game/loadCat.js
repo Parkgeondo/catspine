@@ -13,9 +13,7 @@ const MODULES = {
   calico: require('../../assets/cats/calico.glb'),
 };
 
-// Decode base64 → ArrayBuffer without pulling a dependency. RN's XHR is flaky
-// reading binary file:// URIs, so we read the .glb as base64 and parse it from
-// memory instead, which is reliable across iOS/Android.
+// Decode base64 → ArrayBuffer without pulling a dependency.
 function base64ToArrayBuffer(base64) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   const lookup = new Uint8Array(256);
@@ -42,18 +40,29 @@ function base64ToArrayBuffer(base64) {
   return bytes.buffer;
 }
 
-// Resolve, read, and parse a cat model. Returns the loaded gltf.scene (Group).
-export async function loadCat(catId) {
+// Read a bundled .glb as an ArrayBuffer. In dev the asset URI is http(s) (Metro
+// server); in a production build it's a local file. Handle both.
+async function readGlb(catId) {
   const mod = MODULES[catId] || MODULES.cheese;
   const asset = Asset.fromModule(mod);
-  if (!asset.downloaded) await asset.downloadAsync();
+  await asset.downloadAsync(); // idempotent; ensures localUri is populated
   const uri = asset.localUri || asset.uri;
+  console.log('[loadCat]', catId, '→', uri);
 
+  if (uri.startsWith('http')) {
+    const res = await fetch(uri);
+    return await res.arrayBuffer();
+  }
   const base64 = await FileSystem.readAsStringAsync(uri, {
     encoding: FileSystem.EncodingType.Base64,
   });
-  const buffer = base64ToArrayBuffer(base64);
+  return base64ToArrayBuffer(base64);
+}
 
+// Resolve, read, and parse a cat model. Returns the loaded gltf.scene (Group).
+export async function loadCat(catId) {
+  const buffer = await readGlb(catId);
+  console.log('[loadCat]', catId, 'bytes:', buffer.byteLength);
   const loader = new GLTFLoader();
   const gltf = await new Promise((resolve, reject) =>
     loader.parse(buffer, '', resolve, reject)

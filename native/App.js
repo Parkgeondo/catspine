@@ -27,6 +27,7 @@ export default function App() {
   const [angry, setAngry] = useState(false);
   const [catId, setCatId] = useState(CATS[0].id);
   const [rankOpen, setRankOpen] = useState(false);
+  const [loadStatus, setLoadStatus] = useState('🐈 모델 로딩 중…');
   const reduceMotion = useRef(false);
 
   // boot: restore cat choice, reduce-motion pref, and a ranking session
@@ -100,7 +101,11 @@ export default function App() {
           reduceMotion={reduceMotion.current}
           onScore={onScore}
           onMood={onMood}
+          onStatus={setLoadStatus}
         />
+        <Text style={styles.debugStatus} pointerEvents="none">
+          {loadStatus}
+        </Text>
         <Pressable
           style={StyleSheet.absoluteFill}
           onPress={spin}
@@ -175,6 +180,15 @@ const styles = StyleSheet.create({
   },
   ghostBtnText: { color: theme.text, fontSize: 15, fontWeight: '700' },
   stage: { flex: 1, marginVertical: 8 },
+  debugStatus: {
+    position: 'absolute',
+    top: 6,
+    left: 0,
+    right: 0,
+    textAlign: 'center',
+    color: theme.textDim,
+    fontSize: 12,
+  },
   mood: {
     color: theme.textDim,
     textAlign: 'center',

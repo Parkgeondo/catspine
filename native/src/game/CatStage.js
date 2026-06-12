@@ -8,7 +8,7 @@ import { theme } from '../theme';
 
 // The cat sits on a pivot; we roll the pivot about Y so the cat spins around
 // its long (lying) axis like a turntable.
-function CatRig({ game, catId, reduceMotion, onScore, onMood }) {
+function CatRig({ game, catId, reduceMotion, onScore, onMood, onStatus }) {
   const pivot = useRef();
   const [model, setModel] = useState(null);
   const loadToken = useRef(0);
@@ -18,6 +18,7 @@ function CatRig({ game, catId, reduceMotion, onScore, onMood }) {
   useEffect(() => {
     const myToken = ++loadToken.current;
     let alive = true;
+    onStatus?.('🐈 모델 로딩 중…');
     loadCat(catId)
       .then((scene) => {
         if (!alive || myToken !== loadToken.current) return;
@@ -30,12 +31,19 @@ function CatRig({ game, catId, reduceMotion, onScore, onMood }) {
         // center on the spin (Y) axis and rest the cat on the cushion
         const box = new THREE.Box3().setFromObject(scene);
         const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
         scene.position.x -= center.x;
         scene.position.z -= center.z;
         scene.position.y -= box.min.y; // bottom sits on y = 0
         setModel(scene);
+        onStatus?.(
+          `✅ 로드됨 ${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}`
+        );
       })
-      .catch((err) => console.warn('GLB load failed:', err?.message || err));
+      .catch((err) => {
+        console.warn('GLB load failed:', err?.message || err);
+        onStatus?.('❌ 로드 실패: ' + (err?.message || String(err)));
+      });
     return () => {
       alive = false;
     };
@@ -100,6 +108,12 @@ export default function CatStage(props) {
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
         <circleGeometry args={[3.2, 48]} />
         <meshStandardMaterial color={theme.ground} roughness={1} />
+      </mesh>
+      {/* DEBUG marker: a bright cube to the side. If you can see this but not the
+          cat, the GL viewport renders fine and the issue is model loading. */}
+      <mesh position={[1.8, 0.4, 0]}>
+        <boxGeometry args={[0.5, 0.5, 0.5]} />
+        <meshStandardMaterial color="#ff7a1a" />
       </mesh>
       <CatRig {...props} />
     </Canvas>
