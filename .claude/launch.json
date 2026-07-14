@@ -7,6 +7,13 @@
       "runtimeArgs": ["start"],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "miniapp",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "miniapp"],
+      "port": 5173,
+      "autoPort": true
     }
   ]
 }

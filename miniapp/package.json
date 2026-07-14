@@ -1,0 +1,18 @@
+{
+  "name": "cat-spin-miniapp",
+  "version": "1.0.0",
+  "description": "고양이 돌리기 — 토스 미니앱(앱인토스) 빌드",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@apps-in-toss/web-framework": "latest",
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}
