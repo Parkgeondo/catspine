@@ -1,0 +1,24 @@
+# Render.com 원클릭 배포 설정 (Blueprint)
+# 사용법: Render 대시보드 → New → Blueprint → 이 저장소 선택 → 브랜치 선택
+# 배포되면 https://catspine-server.onrender.com 형태의 URL이 생깁니다.
+services:
+  - type: web
+    name: catspine-server
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/leaderboard
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      # 점수 세션 서명 키 — Render가 배포 시 안전한 랜덤 값을 자동 생성
+      - key: SCORE_SECRET
+        generateValue: true
+      # 랭킹 API를 호출할 수 있는 오리진 목록 (쉼표 구분).
+      # GitHub Pages는 미리 넣어뒀고, 토스 웹뷰 오리진은 샌드박스 테스트 때
+      # 서버 로그의 "[cors] blocked origin: ..." 값을 보고 추가하세요.
+      - key: ALLOWED_ORIGINS
+        value: https://parkgeondo.github.io

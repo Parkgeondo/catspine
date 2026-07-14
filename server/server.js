@@ -26,6 +26,33 @@ const app = express();
 if (process.env.TRUST_PROXY) app.set('trust proxy', 1);
 
 // ---------------------------------------------------------------------------
+// CORS: allow cross-origin clients (GitHub Pages, Toss mini-app webview…).
+// Origins come from the ALLOWED_ORIGINS env var, comma-separated, e.g.
+//   ALLOWED_ORIGINS=https://parkgeondo.github.io,https://<toss-webview-origin>
+// Unset → same-origin only (local `npm start` needs nothing). Blocked origins
+// are logged so you can discover the exact webview origin from sandbox tests.
+// ---------------------------------------------------------------------------
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Max-Age', '86400');
+  } else if (origin && origin !== `${req.protocol}://${req.headers.host}`) {
+    console.warn('[cors] blocked origin:', origin);
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+// ---------------------------------------------------------------------------
 // In-memory game sessions: sessionId -> { issuedAt, used }
 // Tie each run to a server-issued start time for the anti-cheat time check.
 // ---------------------------------------------------------------------------

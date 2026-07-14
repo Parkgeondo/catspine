@@ -7,6 +7,12 @@
     <title>고양이 돌리기 🐱</title>
     <link rel="stylesheet" href="/src/style.css" />
     <!-- three.js는 importmap(CDN) 대신 Vite가 node_modules에서 번들합니다. -->
+    <script>
+      // 온라인 랭킹 서버 주소. Render에 배포한 서버 URL을 넣으면 공용 랭킹이
+      // 켜져요 (예: 'https://catspine-server.onrender.com').
+      // 빈 문자열이면 이 기기 로컬(localStorage) 랭킹으로 동작합니다.
+      window.CAT_API_BASE = '';
+    </script>
   </head>
   <body>
     <!-- Live region for screen readers: announces score & cat mood -->

@@ -36,16 +36,21 @@ npm run build       # dist/ 생성
 2. 테스트 완료 후 콘솔에서 **검수(출시) 요청**.
 3. 승인되면 토스 앱에 노출 🎉
 
-## 랭킹 서버 (선택)
+## 랭킹 서버 (공용 온라인 랭킹)
 
-기본은 로컬(localStorage) 랭킹입니다. 공용 랭킹을 쓰려면:
+기본은 로컬(localStorage) 랭킹입니다. 공용 랭킹 켜는 법:
 
-1. `../server`를 HTTPS 호스트(Render, Railway 등)에 배포.
-2. `index.html`의 `<head>`에 추가:
-   ```html
-   <script>window.CAT_API_BASE = 'https://your-backend.example.com';</script>
-   ```
-3. 서버 CORS 허용 오리진에 미니앱 도메인 추가. 앱인토스 쪽 외부 도메인 허용 설정도 확인.
+1. **서버 배포**: 저장소 루트의 `render.yaml`로 Render에 원클릭 배포
+   (Render 대시보드 → New → **Blueprint** → 이 저장소·브랜치 선택).
+   `SCORE_SECRET`은 자동 생성되고, `NODE_ENV`/`TRUST_PROXY`도 설정돼 있어요.
+2. **주소 연결**: 배포된 URL(예: `https://catspine-server.onrender.com`)을
+   `index.html`의 `window.CAT_API_BASE`에 입력.
+3. **CORS 허용**: 샌드박스에서 랭킹을 열어보면 서버 로그에
+   `[cors] blocked origin: https://...` 로 토스 웹뷰의 실제 오리진이 찍혀요.
+   그 값을 Render 환경변수 `ALLOWED_ORIGINS`에 추가(쉼표 구분)하면 끝.
+
+> Render 무료 플랜은 디스크가 휘발성이라 재배포 시 `leaderboard.json`이
+> 초기화돼요. 본격 운영 전에 유료 디스크나 외부 DB로 옮기는 걸 권장.
 
 ## 구조
 
