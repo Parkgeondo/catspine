@@ -1,0 +1,9 @@
+node_modules/
+.expo/
+dist/
+web-build/
+*.log
+.DS_Store
+# EAS / 네이티브 빌드 산출물
+ios/
+android/
