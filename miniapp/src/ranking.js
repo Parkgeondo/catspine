@@ -1,5 +1,6 @@
 import { CAT_BY_ID } from './cats.js';
 import { initFirebase, isConfigured } from './firebase.js';
+import { getTossUserHash, tossDocId, defaultNickname } from './toss.js';
 
 // Nickname rule mirrored on the server / Firestore rules.
 const NICK_RE = /^[\p{L}\p{N}_\-. ]{2,12}$/u;
@@ -13,6 +14,9 @@ let st = null;
 // 'firebase' → Firestore | 'server' → Node API | 'local' → localStorage
 let mode = 'local';
 let fb = null;
+// 토스 계정 모드: 계정당 1개 문서. null이면 기존 익명 등록 흐름.
+let accountId = null;
+let accountBest = 0; // 이미 서버에 반영된 내 최고점 (자동 등록 중복 방지)
 
 const $ = (s) => document.querySelector(s);
 
@@ -55,7 +59,9 @@ export function initRanking(state) {
       st.myEntryId = result.entryId;
       errEl.textContent = result.local
         ? `등록 완료! 현재 ${result.rank}위 🎉 (이 기기 기록)`
-        : `등록 완료! 현재 ${result.rank}위 🎉`;
+        : result.updated === false
+          ? `내 최고점 ${result.best}점 유지 중 — 현재 ${result.rank}위 🏅`
+          : `등록 완료! 현재 ${result.rank}위 🎉`;
       errEl.classList.add('ok');
       if (mode === 'server') await startSession(); // refresh single-use session
       await refreshLeaderboard();
@@ -79,6 +85,7 @@ async function bootBackend() {
       fb = await initFirebase();
       if (fb) {
         mode = 'firebase';
+        await bootTossAccount();
         return;
       }
     } catch (err) {
@@ -88,8 +95,58 @@ async function bootBackend() {
   await startSession(); // sets mode 'server' or 'local'
 }
 
+// 토스 안에서 실행 중이면 계정 모드로 전환: 닉네임 자동 채움 + 최고점 자동 등록.
+async function bootTossAccount() {
+  const hash = await getTossUserHash();
+  if (!hash) return; // 토스 밖(일반 브라우저) → 기존 익명 흐름 유지
+
+  accountId = tossDocId(hash);
+  st.myEntryId = accountId;
+
+  const nickInput = $('#nickname');
+  try {
+    const mine = await fb.getEntry(accountId);
+    accountBest = mine?.score || 0;
+    if (nickInput && !nickInput.value) {
+      nickInput.value = mine?.nickname || defaultNickname(hash);
+    }
+  } catch (err) {
+    console.warn('내 기록 조회 실패(무시하고 진행):', err);
+    if (nickInput && !nickInput.value) nickInput.value = defaultNickname(hash);
+  }
+
+  const hint = $('.submit-hint');
+  if (hint) {
+    hint.innerHTML =
+      '토스 계정당 <strong>기록 1개</strong>가 자동으로 유지돼요 (최고점만 저장). ' +
+      '닉네임은 언제든 바꿀 수 있어요.';
+  }
+
+  // 자동 등록: 점수가 내 최고점을 넘으면 조용히 서버에 반영 (등록 버튼 불필요)
+  setInterval(async () => {
+    if (!fb || !accountId) return;
+    if (st.score <= accountBest) return;
+    const nickname = (nickInput?.value || '').trim() || defaultNickname(hash);
+    if (!NICK_RE.test(nickname)) return;
+    try {
+      const r = await fb.submitAsUser(accountId, nickname, st.score, st.catId);
+      accountBest = r.best;
+      st.submitted = true;
+    } catch (err) {
+      console.warn('자동 등록 실패(다음에 재시도):', err);
+    }
+  }, 6000);
+}
+
 function submitByMode(nickname) {
   if (mode === 'firebase') {
+    if (accountId) {
+      // 계정 모드: 최고점만 유지되는 내 단일 기록을 갱신
+      return fb.submitAsUser(accountId, nickname, st.score, st.catId).then((r) => {
+        accountBest = r.best;
+        return { ...r, local: false };
+      });
+    }
     return fb.submit(nickname, st.score, st.catId).then((r) => ({ ...r, local: false }));
   }
   if (mode === 'server') return submitOnline(nickname);

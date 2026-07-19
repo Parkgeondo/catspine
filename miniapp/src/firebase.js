@@ -11,7 +11,10 @@ import { initializeApp } from 'firebase/app';
 import {
   getFirestore,
   collection,
+  doc,
   addDoc,
+  setDoc,
+  getDoc,
   getDocs,
   query,
   orderBy,
@@ -108,6 +111,48 @@ export async function initFirebase() {
         const data = d.data();
         return { id: d.id, nickname: data.nickname, score: data.score, catId: data.catId };
       });
+    },
+
+    // ---- 토스 계정 모드: 계정당 1개 문서(docId 고정), 최고점만 갱신 ----
+
+    // 내 기존 기록 (없으면 null) — 닉네임 프리필/최고점 비교용
+    async getEntry(docId) {
+      const snap = await withTimeout(getDoc(doc(db, COLLECTION, docId)), 8000, 'my entry');
+      return snap.exists() ? snap.data() : null;
+    },
+
+    // 최고점일 때만 문서를 덮어쓴다(규칙이 점수 하향을 거부). 반환: 반영된
+    // 최고점 기준의 순위와 실제 갱신 여부.
+    async submitAsUser(docId, nickname, score, catId) {
+      const existing = await this.getEntry(docId);
+      const best = Math.max(existing?.score || 0, score);
+      const updated = !existing || score > existing.score;
+      if (updated) {
+        await withTimeout(
+          setDoc(doc(db, COLLECTION, docId), {
+            nickname,
+            score,
+            catId,
+            createdAt: serverTimestamp(),
+          }),
+          10000,
+          'score upsert'
+        );
+      }
+      let rank = 1;
+      try {
+        const snap = await withTimeout(
+          getCountFromServer(
+            query(collection(db, COLLECTION), where('score', '>', best))
+          ),
+          8000,
+          'rank count'
+        );
+        rank = snap.data().count + 1;
+      } catch (e) {
+        console.warn('rank count failed, falling back', e);
+      }
+      return { entryId: docId, rank, best, updated };
     },
   };
 }
