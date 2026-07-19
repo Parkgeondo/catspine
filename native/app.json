@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "고양이 돌리기",
+    "slug": "cat-spin",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "catspin",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.parkgeondo.catspin"
+    },
+    "android": {
+      "package": "com.parkgeondo.catspin"
+    },
+    "extra": {
+      "//": "랭킹 백엔드 주소. 비워두면 로컬(AsyncStorage) 모드로 동작합니다.",
+      "catApiBase": ""
+    }
+  }
+}

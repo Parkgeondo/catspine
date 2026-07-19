@@ -13,8 +13,14 @@ service cloud.firestore {
       // 생성만 허용 — 형식/범위를 엄격히 검증
       allow create: if isValidScore(request.resource.data);
 
-      // 한번 올린 기록은 수정·삭제 불가 (점수 조작/타인 기록 변경 차단)
-      allow update, delete: if false;
+      // 토스 계정 기록(문서 ID가 'toss_'로 시작)은 "점수가 오를 때만" 갱신 허용.
+      // (계정당 1개 문서에 최고점만 유지 — 점수 하향/기록 삭제는 차단)
+      allow update: if id.matches('toss_.*')
+        && isValidScore(request.resource.data)
+        && request.resource.data.score >= resource.data.score;
+
+      // 익명 기록은 수정 불가, 삭제는 전부 불가
+      allow delete: if false;
     }
 
     function isValidScore(d) {
