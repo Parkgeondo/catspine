@@ -36,21 +36,22 @@ npm run build       # dist/ 생성
 2. 테스트 완료 후 콘솔에서 **검수(출시) 요청**.
 3. 승인되면 토스 앱에 노출 🎉
 
-## 랭킹 서버 (공용 온라인 랭킹)
+## 랭킹 (기본: Firebase Firestore)
 
-기본은 로컬(localStorage) 랭킹입니다. 공용 랭킹 켜는 법:
+랭킹은 3단 폴백으로 동작해요: **Firestore → Node 서버 → 이 기기 로컬(localStorage)**.
 
-1. **서버 배포**: 저장소 루트의 `render.yaml`로 Render에 원클릭 배포
-   (Render 대시보드 → New → **Blueprint** → 이 저장소·브랜치 선택).
-   `SCORE_SECRET`은 자동 생성되고, `NODE_ENV`/`TRUST_PROXY`도 설정돼 있어요.
-2. **주소 연결**: 배포된 URL(예: `https://catspine-server.onrender.com`)을
-   `index.html`의 `window.CAT_API_BASE`에 입력.
-3. **CORS 허용**: 샌드박스에서 랭킹을 열어보면 서버 로그에
-   `[cors] blocked origin: https://...` 로 토스 웹뷰의 실제 오리진이 찍혀요.
-   그 값을 Render 환경변수 `ALLOWED_ORIGINS`에 추가(쉼표 구분)하면 끝.
+기본값은 **Firestore 공용 랭킹**입니다 — `src/firebase-config.js`가 Firebase 프로젝트
+`catspine-4e7ae`를 가리키고 있어서, 서버 호스팅 없이 바로 전체 사용자 공용 랭킹이
+동작해요 (항상 켜져 있고, 데이터 영구 보존, CORS 설정 불필요).
 
-> Render 무료 플랜은 디스크가 휘발성이라 재배포 시 `leaderboard.json`이
-> 초기화돼요. 본격 운영 전에 유료 디스크나 외부 DB로 옮기는 걸 권장.
+- 점수 검증은 `../firestore.rules`(Firestore 보안 규칙)가 담당 — 형식·범위 검증
+  수준의 "캐주얼 게임" 등급이에요. 더 강한 치팅 방지가 필요해지면 App Check 또는
+  Cloud Functions(Blaze 요금제)로 확장.
+- SDK는 npm으로 번들해서 런타임 CDN 의존이 없어요 (웹 버전 `client/`는 CDN 임포트).
+
+Node 서버 방식으로 바꾸고 싶으면: Firestore 설정을 비우고, 루트의 `render.yaml`로
+서버를 배포한 뒤 `index.html`의 `window.CAT_API_BASE`에 주소를 넣으세요
+(CORS는 서버 로그의 `[cors] blocked origin` 값을 `ALLOWED_ORIGINS`에 추가).
 
 ## 구조
 

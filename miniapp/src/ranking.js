@@ -1,18 +1,18 @@
 import { CAT_BY_ID } from './cats.js';
+import { initFirebase, isConfigured } from './firebase.js';
 
-// Nickname rule mirrored on the server. Letters/numbers/Korean + a few marks.
+// Nickname rule mirrored on the server / Firestore rules.
 const NICK_RE = /^[\p{L}\p{N}_\-. ]{2,12}$/u;
 
-// Where the ranking backend lives. Same-origin by default (works with
-// `npm start`). On a static host (e.g. GitHub Pages) there is no backend, so
-// requests fail and we transparently fall back to a per-device local board.
-// To use a hosted backend from a static page, set `window.CAT_API_BASE` before
-// this module loads (e.g. in index.html).
+// Same-origin Node backend (used by `npm start`). Override with
+// window.CAT_API_BASE to point at a hosted backend.
 const API_BASE = (typeof window !== 'undefined' && window.CAT_API_BASE) || '';
 const LOCAL_KEY = 'catspin.localLeaderboard';
 
 let st = null;
-let localMode = false; // true once we detect there's no reachable backend
+// 'firebase' → Firestore | 'server' → Node API | 'local' → localStorage
+let mode = 'local';
+let fb = null;
 
 const $ = (s) => document.querySelector(s);
 
@@ -50,14 +50,14 @@ export function initRanking(state) {
 
     submitBtn.disabled = true;
     try {
-      const result = localMode ? submitLocal(nickname) : await submitOnline(nickname);
+      const result = await submitByMode(nickname);
       st.submitted = true;
       st.myEntryId = result.entryId;
       errEl.textContent = result.local
         ? `등록 완료! 현재 ${result.rank}위 🎉 (이 기기 기록)`
         : `등록 완료! 현재 ${result.rank}위 🎉`;
       errEl.classList.add('ok');
-      if (!localMode) await startSession(); // fresh session for the next run
+      if (mode === 'server') await startSession(); // refresh single-use session
       await refreshLeaderboard();
     } catch (err) {
       console.error(err);
@@ -67,11 +67,37 @@ export function initRanking(state) {
     }
   });
 
-  startSession();
+  bootBackend();
 }
 
 // ---------------------------------------------------------------------------
-// Online (Node backend) mode
+// Backend selection: Firebase (works on static hosts) → Node server → local
+// ---------------------------------------------------------------------------
+async function bootBackend() {
+  if (isConfigured()) {
+    try {
+      fb = await initFirebase();
+      if (fb) {
+        mode = 'firebase';
+        return;
+      }
+    } catch (err) {
+      console.error('Firebase init failed, falling back', err);
+    }
+  }
+  await startSession(); // sets mode 'server' or 'local'
+}
+
+function submitByMode(nickname) {
+  if (mode === 'firebase') {
+    return fb.submit(nickname, st.score, st.catId).then((r) => ({ ...r, local: false }));
+  }
+  if (mode === 'server') return submitOnline(nickname);
+  return Promise.resolve(submitLocal(nickname));
+}
+
+// ---------------------------------------------------------------------------
+// Node server mode
 // ---------------------------------------------------------------------------
 async function startSession() {
   try {
@@ -79,9 +105,8 @@ async function startSession() {
     if (!res.ok) throw new Error('session failed');
     const data = await res.json();
     st.session = { sessionId: data.sessionId, token: data.token };
-    localMode = false;
+    mode = 'server';
   } catch (err) {
-    // no reachable backend → switch to local-only leaderboard
     st.session = null;
     enableLocalMode();
   }
@@ -89,7 +114,6 @@ async function startSession() {
 
 async function submitOnline(nickname) {
   if (!st.session) {
-    // backend went away mid-session → degrade to local
     enableLocalMode();
     return submitLocal(nickname);
   }
@@ -114,11 +138,11 @@ async function submitOnline(nickname) {
 }
 
 // ---------------------------------------------------------------------------
-// Local (static host / offline) mode — per-device records in localStorage
+// Local (offline / no backend) mode — per-device records in localStorage
 // ---------------------------------------------------------------------------
 function enableLocalMode() {
-  if (localMode) return;
-  localMode = true;
+  if (mode === 'local') return;
+  mode = 'local';
   const hint = $('.submit-hint');
   if (hint) {
     hint.innerHTML =
@@ -156,18 +180,25 @@ async function refreshLeaderboard() {
   const listEl = $('#rank-list');
   listEl.innerHTML = '<li class="rank-empty">불러오는 중…</li>';
   try {
-    if (localMode) {
-      renderLeaderboard(localGet().slice(0, 50));
-      return;
+    let entries;
+    if (mode === 'firebase') {
+      entries = await fb.leaderboard(50);
+    } else if (mode === 'server') {
+      const res = await fetch(`${API_BASE}/api/leaderboard?limit=50`);
+      if (!res.ok) throw new Error('leaderboard failed');
+      entries = (await res.json()).entries || [];
+    } else {
+      entries = localGet().slice(0, 50);
     }
-    const res = await fetch(`${API_BASE}/api/leaderboard?limit=50`);
-    if (!res.ok) throw new Error('leaderboard failed');
-    const data = await res.json();
-    renderLeaderboard(data.entries || []);
+    renderLeaderboard(entries);
   } catch (err) {
-    // backend unreachable → show local board instead
-    enableLocalMode();
-    renderLeaderboard(localGet().slice(0, 50));
+    console.error(err);
+    if (mode === 'server') {
+      enableLocalMode();
+      renderLeaderboard(localGet().slice(0, 50));
+    } else {
+      listEl.innerHTML = '<li class="rank-empty">랭킹을 불러오지 못했어요 😿</li>';
+    }
   }
 }
 
