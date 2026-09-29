@@ -1,0 +1,907 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>침묵의 검사 2</title>
+<style>
+  :root{--bg:#07080b;--fg:#ddd8cb;--dim:#6f6b62;--accent:#c9a45c;--red:#c0392b}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+    font-family:"Noto Serif KR","Malgun Gothic","Apple SD Gothic Neo",serif;
+    overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;overscroll-behavior:none}
+  #wrap{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;text-align:center}
+  h1{font-weight:400;letter-spacing:.4em;margin:0 0 .4em;color:var(--accent);font-size:clamp(28px,7vw,52px)}
+  .sub{color:var(--dim);line-height:1.8}
+  #hud{position:fixed;top:max(14px,env(safe-area-inset-top));left:16px;right:16px;display:flex;justify-content:space-between;font-size:20px;color:var(--dim);z-index:2}
+  #hearts{color:var(--red);letter-spacing:2px}
+  #who{color:var(--accent);min-height:1.4em;font-size:18px}
+  #caption{max-width:760px;font-size:clamp(17px,4vw,26px);line-height:1.6;min-height:3.2em}
+  #keys{position:fixed;bottom:max(12px,env(safe-area-inset-bottom));left:16px;right:16px;color:var(--dim);font-size:12px;line-height:1.7;text-align:center}
+  kbd{border:1px solid #3a3730;border-radius:4px;padding:0 5px;font-family:inherit}
+  #stance{position:fixed;left:0;right:0;bottom:max(18px,env(safe-area-inset-bottom));text-align:center;color:#3a3730;font-size:15px;pointer-events:none}
+  #stance.fight{color:var(--red)}
+  #stance.grip{color:var(--accent)}
+  #view{position:fixed;right:12px;top:52px;display:none;background:#0b0c10;border:1px solid #222;z-index:2}
+  #flash{position:fixed;inset:0;background:var(--red);opacity:0;pointer-events:none;transition:opacity .4s}
+  #start{margin-top:26px;font:inherit;font-size:20px;color:var(--bg);background:var(--accent);border:0;border-radius:8px;padding:14px 34px;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="hud"><span id="hearts"></span><span id="wave"></span></div>
+<div id="stance"></div>
+<canvas id="view" width="240" height="240"></canvas>
+<div id="wrap">
+  <div id="title">
+    <h1>침묵의 검사</h1>
+    <div class="sub">앞을 볼 수 없고, 말할 수 없는 검사의 이야기.<br>
+      <b>이어폰을 끼고, 눈을 감고 플레이하세요.</b><br>
+      왼쪽·오른쪽을 눌러 돌고, 한 손가락을 누른 채 다른 손가락으로 쓸어 베세요.<br>쨍 소리에 맞추면 받아치고, 활시위 소리 끝의 팅! 에 아래로 쓸어 피하세요.</div>
+    <button id="start">화면을 눌러 시작</button>
+  </div>
+  <div id="play" style="display:none">
+    <div id="who"></div>
+    <div id="caption"></div>
+  </div>
+</div>
+<div id="flash"></div>
+<div id="keys">
+  <b>휴대폰</b> 화면 왼쪽 누르기 = 왼쪽 회전 · 오른쪽 누르기 = 오른쪽 회전 · 톡 = 지팡이 메아리<br>
+  한 손가락 누른 채 다른 손가락: 쓸기 = 베기 · 아래로 쓸기 = 피하기 · 쨍 소리에 맞춰 대기 = 받아치기<br>
+  <b>키보드</b> <kbd>←→</kbd> 회전 <kbd>Space</kbd> 베기 <kbd>↑</kbd> 받아치기 <kbd>↓</kbd> 피하기 <kbd>C</kbd> 지팡이
+  · <b>패드</b> 스틱 회전 · A 베기 · X 받아치기 · B 피하기 · Y 지팡이 · <kbd>V</kbd> 관전 지도
+</div>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const rand = n => Math.floor(Math.random() * n);
+const d20 = () => 1 + rand(20);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const TAU = Math.PI * 2;
+const normA = a => { a %= TAU; if (a > Math.PI) a -= TAU; if (a <= -Math.PI) a += TAU; return a; };
+
+/* ================= 상태 ================= */
+const state = {};
+function resetState() {
+  Object.assign(state, { hp: 5, maxHp: 5, atk: 0, parryBonus: 0, wave: '' });
+  updateHUD();
+}
+let mode = 'title';          // title | talk | field | end
+
+/* ================= 오디오 엔진 ================= */
+let AC, master, bus, revGain, noiseBuf;
+function initAudio() {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+  master = AC.createGain(); master.gain.value = 0.9;
+  const comp = AC.createDynamicsCompressor();
+  master.connect(comp); comp.connect(AC.destination);
+  bus = AC.createGain(); bus.connect(master);
+  const conv = AC.createConvolver(); conv.buffer = impulse(2.8, 2.2);
+  revGain = AC.createGain(); revGain.gain.value = 0.12;
+  bus.connect(conv); conv.connect(revGain); revGain.connect(master);
+  noiseBuf = AC.createBuffer(1, AC.sampleRate * 2, AC.sampleRate);
+  const d = noiseBuf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+}
+function impulse(sec, decay) {
+  const len = AC.sampleRate * sec, b = AC.createBuffer(2, len, AC.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = b.getChannelData(c);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+  }
+  return b;
+}
+const T = () => AC.currentTime;
+function envG(t, a, peak, d) {
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + a);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + a + d);
+  return g;
+}
+function out(g, dest, pan) {
+  if (pan == null) { g.connect(dest || bus); return; }
+  const p = AC.createStereoPanner(); p.pan.value = pan; g.connect(p); p.connect(dest || bus);
+}
+function tone(dest, o) {
+  const t = T() + (o.delay || 0), a = o.a || 0.008, dur = o.dur || 0.2;
+  const osc = AC.createOscillator(); osc.type = o.type || 'sine';
+  osc.frequency.setValueAtTime(o.f0, t);
+  if (o.f1) osc.frequency.exponentialRampToValueAtTime(o.f1, t + a + dur);
+  const g = envG(t, a, o.vol ?? 0.3, dur);
+  let node = osc;
+  if (o.lp) { const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = o.lp; osc.connect(f); node = f; }
+  node.connect(g); out(g, dest, o.pan);
+  osc.start(t); osc.stop(t + a + dur + 0.05);
+}
+function noise(dest, o) {
+  const t = T() + (o.delay || 0), a = o.a || 0.005, dur = o.dur || 0.1;
+  const s = AC.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  const f = AC.createBiquadFilter(); f.type = o.ft || 'bandpass'; f.Q.value = o.q ?? 1;
+  f.frequency.setValueAtTime(o.f0 || 1000, t);
+  if (o.f1) f.frequency.exponentialRampToValueAtTime(o.f1, t + a + dur);
+  const g = envG(t, a, o.vol ?? 0.3, dur);
+  s.connect(f); f.connect(g); out(g, dest, o.pan);
+  s.start(t, Math.random() * 1.5); s.stop(t + a + dur + 0.05);
+}
+
+/* 방향 소리: 좌우 = 패닝, 앞뒤 = 음색(정면은 또렷, 뒤는 먹먹), 벽 너머 = 더 먹먹 */
+const FRONT = 0.45;   // 이 각도(라디안) 안이면 "정면" = 벨 수 있는 방향
+class Spatial {
+  constructor() {
+    this.input = AC.createGain();
+    this.lp = AC.createBiquadFilter(); this.lp.type = 'lowpass'; this.lp.frequency.value = 8000;
+    this.g = AC.createGain(); this.g.gain.value = 0;
+    this.p = AC.createStereoPanner();
+    this.input.connect(this.lp); this.lp.connect(this.g); this.g.connect(this.p); this.p.connect(bus);
+  }
+  set(rel, dist, occl, instant) {
+    const s = Math.sin(rel), c = Math.cos(rel), t = T(), k = instant ? 0.001 : 0.03;
+    this.p.pan.setTargetAtTime(s * 0.92, t, k);
+    const lp = occl ? 900 : (Math.abs(rel) < FRONT ? 14000 : 500 + (c + 1) / 2 * 4000);
+    this.lp.frequency.setTargetAtTime(lp, t, k);
+    const g = (2 / (1 + dist * 0.45)) * (0.55 + 0.45 * (c + 1) / 2) * (occl ? .5 : 1);
+    this.g.gain.setTargetAtTime(g, t, k * 1.5);
+  }
+  dispose() { setTimeout(() => { try { this.p.disconnect(); } catch (e) {} }, 2500); }
+}
+function oneShot(rel, d) { const s = new Spatial(); s.set(rel, d, false, true); s.dispose(); return s.input; }
+
+/* ================= 효과음 (전부 실시간 합성) ================= */
+const SFX = {
+  stepGrass(pan) { noise(bus, { ft: 'highpass', f0: 2200, dur: .1, vol: .13, pan }); noise(bus, { f0: 900, dur: .06, vol: .1, pan, delay: .04 }); },
+  stepStone(pan) { noise(bus, { f0: 1800, q: 2, dur: .04, vol: .25, pan }); tone(bus, { f0: 90, f1: 50, dur: .05, vol: .2, pan }); },
+  heavy(d) { tone(d, { f0: 70, f1: 30, dur: .35, vol: 1 }); noise(d, { ft: 'lowpass', f0: 300, dur: .25, vol: .7 }); },
+  paw(d) { noise(d, { f0: 900, q: .8, dur: .05, vol: .45 }); noise(d, { f0: 700, q: .8, dur: .05, vol: .4, delay: .13 }); },
+  patter(d) { for (let i = 0; i < 3; i++) noise(d, { f0: 1600, q: 1.2, dur: .03, vol: .4, delay: i * .08 }); },
+  tick() { tone(bus, { f0: 2400, dur: .015, vol: .05 }); },
+  bump() { tone(bus, { f0: 120, f1: 60, dur: .1, vol: .6 }); noise(bus, { ft: 'lowpass', f0: 600, dur: .06, vol: .5 }); },
+  bumpTree() { noise(bus, { f0: 2500, q: .7, dur: .35, vol: .3 }); tone(bus, { f0: 150, f1: 80, dur: .08, vol: .3 }); },
+  bumpWater() { noise(bus, { f0: 900, q: 1, dur: .3, vol: .35 }); },
+  cane() { tone(bus, { type: 'triangle', f0: 1900, dur: .03, vol: .35 }); noise(bus, { ft: 'highpass', f0: 3000, dur: .02, vol: .4 }); },
+  echo(d, mat, front, delay) {
+    if (mat === 'soft') noise(d, { f0: 3500, q: 1.5, dur: .06, vol: .5, delay });
+    else if (mat === 'water') noise(d, { f0: 1200, q: 2, dur: .09, vol: .5, delay });
+    else { tone(d, { type: 'triangle', f0: front ? 2300 : 1700, dur: .04, vol: .45, delay }); noise(d, { ft: 'highpass', f0: 2500, dur: .02, vol: .3, delay }); }
+  },
+  growl(d, base = 78, dur = .9) {
+    const t = T();
+    const o = AC.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(base * 1.1, t); o.frequency.linearRampToValueAtTime(base * .9, t + dur);
+    const lfo = AC.createOscillator(); lfo.frequency.value = 17 + Math.random() * 6;
+    const lg = AC.createGain(); lg.gain.value = .5;
+    const am = AC.createGain(); am.gain.value = .5;
+    lfo.connect(lg); lg.connect(am.gain);
+    const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 650; f.Q.value = 4;
+    const g = envG(t, .08, .9, dur);
+    o.connect(f); f.connect(am); am.connect(g); g.connect(d);
+    o.start(t); lfo.start(t); o.stop(t + dur + .2); lfo.stop(t + dur + .2);
+    noise(d, { f0: 350, q: 3, dur, vol: .25, a: .08 });
+  },
+  howl(d) {
+    const t = T();
+    const o = AC.createOscillator(); o.type = 'triangle';
+    o.frequency.setValueAtTime(380, t); o.frequency.linearRampToValueAtTime(680, t + .5);
+    o.frequency.linearRampToValueAtTime(620, t + 1.3); o.frequency.linearRampToValueAtTime(420, t + 1.8);
+    const v = AC.createOscillator(); v.frequency.value = 5.5;
+    const vg = AC.createGain(); vg.gain.value = 10; v.connect(vg); vg.connect(o.frequency);
+    const g = AC.createGain();
+    g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.35, t + .3);
+    g.gain.setValueAtTime(.35, t + 1.3); g.gain.exponentialRampToValueAtTime(.0001, t + 1.9);
+    o.connect(g); g.connect(d); o.start(t); v.start(t); o.stop(t + 2); v.stop(t + 2);
+  },
+  snarl(d) { SFX.growl(d, 100, .5); tone(d, { type: 'sawtooth', f0: 90, f1: 170, dur: .45, vol: .25, lp: 900 }); },
+  snore(d) { noise(d, { ft: 'lowpass', f0: 380, dur: .9, vol: .55, a: .45 }); tone(d, { type: 'sawtooth', f0: 55, dur: .8, vol: .18, lp: 300, a: .45 }); },
+  yelp(d) { tone(d, { type: 'triangle', f0: 800, f1: 1500, dur: .1, vol: .5 }); tone(d, { type: 'triangle', f0: 1400, f1: 600, dur: .22, vol: .45, delay: .11 }); },
+  bite(d) { noise(d, { f0: 1800, q: 2, dur: .08, vol: .9 }); tone(d, { type: 'square', f0: 220, f1: 70, dur: .12, vol: .3, lp: 1200 }); },
+  slash(d) { noise(d, { f0: 2500, f1: 800, q: 3, dur: .15, vol: .8 }); },
+  whiff(d) { noise(d, { f0: 2000, f1: 600, q: 3, dur: .2, vol: .5 }); },
+  swing() { noise(bus, { f0: 3500, f1: 450, q: 4, dur: .22, vol: .7, a: .03 }); },
+  grip() { noise(bus, { ft: 'lowpass', f0: 500, dur: .08, vol: .35 }); tone(bus, { type: 'triangle', f0: 1400, dur: .02, vol: .12, delay: .05 }); },
+  draw() { noise(bus, { ft: 'highpass', f0: 2500, f1: 7000, dur: .18, vol: .35, a: .02 }); tone(bus, { f0: 3300, dur: .35, vol: .05, delay: .12 }); },
+  sheathe() { noise(bus, { ft: 'highpass', f0: 5000, f1: 2000, dur: .15, vol: .25 }); tone(bus, { type: 'triangle', f0: 900, dur: .03, vol: .3, delay: .16 }); },
+  dodge() { noise(bus, { ft: 'lowpass', f0: 1200, f1: 300, dur: .2, vol: .5 }); },
+  alarm() { SFX.draw(); tone(bus, { f0: 85, f1: 45, dur: .3, vol: .7, delay: .05 }); tone(bus, { f0: 85, f1: 45, dur: .3, vol: .7, delay: .3 }); },
+  hit(d) { tone(d, { f0: 160, f1: 40, dur: .22, vol: 1 }); noise(d, { ft: 'lowpass', f0: 1200, dur: .12, vol: .8 }); },
+  clang() { tone(bus, { type: 'square', f0: 1900, dur: .35, vol: .08, lp: 5000 }); tone(bus, { f0: 2870, dur: .5, vol: .12 }); tone(bus, { f0: 4100, dur: .3, vol: .06 }); },
+  hurt() { noise(bus, { ft: 'lowpass', f0: 900, dur: .3, vol: 1 }); tone(bus, { type: 'sawtooth', f0: 120, f1: 45, dur: .35, vol: .35, lp: 600 }); },
+  dice() {
+    for (let i = 0; i < 7; i++) {
+      const dl = i * .06 + Math.random() * .05;
+      noise(bus, { ft: 'highpass', f0: 2500, dur: .02, vol: .35, delay: dl, pan: Math.random() - .5 });
+      tone(bus, { type: 'triangle', f0: 1500 + Math.random() * 1500, dur: .03, vol: .1, delay: dl });
+    }
+  },
+  nod() { noise(bus, { ft: 'lowpass', f0: 900, dur: .1, vol: .3 }); noise(bus, { ft: 'lowpass', f0: 900, dur: .1, vol: .3, delay: .22 }); tone(bus, { f0: 660, f1: 880, dur: .12, vol: .08, delay: .3 }); },
+  shake() { [-.7, .7, -.7, .7].forEach((p, i) => noise(bus, { ft: 'lowpass', f0: 1100, dur: .07, vol: .28, delay: i * .13, pan: p })); tone(bus, { f0: 500, f1: 330, dur: .15, vol: .08, delay: .55 }); },
+  prompt() { tone(bus, { f0: 880, dur: .12, vol: .07 }); tone(bus, { f0: 1320, dur: .18, vol: .06, delay: .1 }); },
+  chime() { [523, 659, 784, 1047].forEach((f, i) => tone(bus, { f0: f, dur: .5, vol: .15, delay: i * .1 })); },
+  bad() { [440, 415, 392, 330].forEach((f, i) => tone(bus, { type: 'triangle', f0: f, dur: .4, vol: .15, delay: i * .15 })); },
+  heartbeat() { tone(bus, { f0: 65, f1: 40, dur: .12, vol: .8 }); tone(bus, { f0: 60, f1: 38, dur: .12, vol: .55, delay: .22 }); },
+  glug() { for (let i = 0; i < 3; i++) tone(bus, { f0: 420 - i * 40, f1: 180, dur: .09, vol: .3, delay: i * .22 }); tone(bus, { f0: 1047, dur: .3, vol: .08, delay: .75 }); tone(bus, { f0: 1568, dur: .4, vol: .07, delay: .85 }); },
+  bell(d) { [0, .12].forEach(dl => { tone(d, { f0: 1320, dur: .5, vol: .35, delay: dl }); tone(d, { f0: 2640, dur: .3, vol: .12, delay: dl }); tone(d, { f0: 3960, dur: .15, vol: .05, delay: dl }); }); },
+  wood(d) { tone(d, { type: 'triangle', f0: 320, f1: 140, dur: .1, vol: .7 }); noise(d, { f0: 1400, q: 2, dur: .08, vol: .6 }); },
+  meow(d) {
+    const t = T();
+    const o = AC.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(520, t); o.frequency.linearRampToValueAtTime(820, t + .18); o.frequency.linearRampToValueAtTime(480, t + .6);
+    const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 2.5;
+    f.frequency.setValueAtTime(900, t); f.frequency.linearRampToValueAtTime(1800, t + .2); f.frequency.linearRampToValueAtTime(1000, t + .6);
+    const g = envG(t, .05, .7, .55);
+    o.connect(f); f.connect(g); g.connect(d || bus); o.start(t); o.stop(t + .7);
+  },
+  purr() {
+    const t = T();
+    const o = AC.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 26;
+    const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 260;
+    const g = AC.createGain(); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.6, t + .3); g.gain.setValueAtTime(.6, t + 1.6); g.gain.exponentialRampToValueAtTime(.0001, t + 2.2);
+    o.connect(f); f.connect(g); g.connect(bus); o.start(t); o.stop(t + 2.3);
+  },
+  goblin(d) { const n = 4 + rand(3); for (let i = 0; i < n; i++) tone(d, { type: 'square', f0: 350 + Math.random() * 500, f1: 300 + Math.random() * 700, dur: .06, vol: .18, delay: i * .09, lp: 2500 }); },
+  cackle(d) { for (let i = 0; i < 5; i++) tone(d, { type: 'square', f0: 900 + i * 90, f1: 700, dur: .05, vol: .2, delay: i * .07, lp: 3000 }); },
+  goblinHurt(d) { tone(d, { type: 'square', f0: 900, f1: 250, dur: .3, vol: .28, lp: 3000 }); },
+  roar(d) { SFX.growl(d, 52, 1.5); tone(d, { type: 'sawtooth', f0: 110, f1: 70, dur: 1.3, vol: .3, lp: 500, a: .15 }); noise(d, { ft: 'lowpass', f0: 500, dur: 1.2, vol: .4, a: .2 }); },
+  inhale(d) { noise(d, { f0: 350, f1: 1600, q: 1, dur: .4, vol: .7, a: .7 }); },
+  ogreHurt(d) { SFX.growl(d, 65, .5); tone(d, { type: 'sawtooth', f0: 160, f1: 60, dur: .5, vol: .35, lp: 800 }); },
+  smash(d) { tone(d, { f0: 90, f1: 25, dur: .5, vol: 1 }); noise(d, { ft: 'lowpass', f0: 700, dur: .4, vol: 1 }); },
+  elder(d) { tone(d, { type: 'triangle', f0: 850, dur: .04, vol: .45 }); tone(d, { type: 'triangle', f0: 850, dur: .04, vol: .45, delay: .55 }); noise(d, { f0: 600, q: 1, dur: .12, vol: .45, delay: 1.1 }); noise(d, { f0: 500, q: 1, dur: .1, vol: .35, delay: 1.3 }); },
+  hum(d) { [523, 587, 659, 587, 523].forEach((f, i) => tone(d, { type: 'triangle', f0: f, dur: .22, vol: .16, delay: i * .28, a: .05 })); },
+  coins(d) { for (let i = 0; i < 7; i++) tone(d, { f0: 3000 + Math.random() * 2500, dur: .05, vol: .14, delay: Math.random() * .45 }); },
+  drum() { tone(bus, { f0: 85, f1: 45, dur: .3, vol: .7 }); noise(bus, { ft: 'lowpass', f0: 300, dur: .15, vol: .4 }); },
+  cart() { for (let i = 0; i < 8; i++) noise(bus, { f0: 600 + rand(600), q: 3, dur: .05, vol: .2, delay: i * .15, pan: -.6 + i * .15 }); },
+  death() { tone(bus, { type: 'sawtooth', f0: 300, f1: 40, dur: 2, vol: .25, lp: 900 }); },
+  // 새 적 / 패링 / 지팡이용
+  bowDraw(d) {   // 끼이익 — 활시위 당기는 소리
+    const t = T();
+    const o = AC.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(80, t); o.frequency.linearRampToValueAtTime(160, t + 1);
+    const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 6;
+    f.frequency.setValueAtTime(700, t); f.frequency.linearRampToValueAtTime(1600, t + 1);
+    const g = AC.createGain(); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.6, t + .9); g.gain.exponentialRampToValueAtTime(.0001, t + 1.05);
+    o.connect(f); f.connect(g); g.connect(d); o.start(t); o.stop(t + 1.1);
+  },
+  twang(d) { tone(d, { type: 'triangle', f0: 230, f1: 170, dur: .35, vol: .6 }); tone(d, { f0: 460, dur: .2, vol: .2 }); noise(d, { ft: 'highpass', f0: 3000, dur: .03, vol: .5 }); },
+  arrowFly(d, dur) { noise(d, { f0: 2600, f1: 4200, q: 4, dur, vol: .35, a: .02 }); },
+  arrowPass(pan) { noise(bus, { f0: 4000, f1: 1200, q: 3, dur: .12, vol: .5, pan }); noise(bus, { f0: 2500, f1: 900, q: 3, dur: .15, vol: .35, pan: -pan, delay: .1 }); },
+  arrowHit() { noise(bus, { f0: 1500, q: 2, dur: .05, vol: .9 }); tone(bus, { f0: 200, f1: 80, dur: .12, vol: .6 }); },
+  quiver(d) { for (let i = 0; i < 3; i++) tone(d, { type: 'triangle', f0: 700 + rand(300), dur: .03, vol: .25, delay: i * .06 }); },
+  breath(d) { noise(d, { f0: 520, q: .7, dur: .5, vol: .22, a: .35 }); noise(d, { f0: 380, q: .7, dur: .6, vol: .18, a: .3, delay: .95 }); },
+  lunge(d) { noise(d, { f0: 900, f1: 3200, q: 1, dur: .2, vol: .7, a: .12 }); },
+  stab(d) { noise(d, { f0: 3000, q: 3, dur: .06, vol: .8 }); tone(d, { type: 'square', f0: 300, f1: 90, dur: .1, vol: .3, lp: 1500 }); },
+  vanish(d) { noise(d, { ft: 'lowpass', f0: 1500, f1: 300, dur: .3, vol: .35 }); },
+  flutter(d) { for (let i = 0; i < 3; i++) noise(d, { f0: 450, q: 1, dur: .025, vol: .3, delay: i * .05 }); },
+  screech(d) { tone(d, { type: 'square', f0: 3000, f1: 5200, dur: .3, vol: .12, lp: 7000 }); tone(d, { f0: 4200, f1: 2800, dur: .25, vol: .1, delay: .3 }); },
+  squeak(d) { tone(d, { type: 'square', f0: 4500, f1: 2000, dur: .15, vol: .12, lp: 7000 }); },
+  tell(d) { tone(d, { type: 'triangle', f0: 2600, f1: 3800, dur: .12, vol: .5 }); noise(d, { ft: 'highpass', f0: 5000, dur: .08, vol: .4 }); },  // "쨍" — 받아칠 타이밍
+  parry() { SFX.clang(); tone(bus, { f0: 1568, dur: .4, vol: .18 }); tone(bus, { f0: 2093, dur: .5, vol: .14, delay: .06 }); },
+  thud(d, delay) { noise(d, { ft: 'lowpass', f0: 500, dur: .07, vol: .7, delay }); tone(d, { f0: 180, f1: 110, dur: .06, vol: .35, delay }); },
+  fanfare() { [523, 659, 784, 1047, 784, 1047].forEach((f, i) => tone(bus, { type: 'triangle', f0: f, dur: i == 5 ? 1.2 : .25, vol: .2, delay: i * .18 })); },
+};
+
+/* ================= 진동 (휴대폰 + 게임패드) ================= */
+let PAD = null;
+function rumble(ms, s) {
+  const a = PAD && PAD.vibrationActuator;
+  if (a && a.playEffect) a.playEffect('dual-rumble', { duration: ms, strongMagnitude: s, weakMagnitude: s * .6 }).catch(() => {});
+}
+function vib(ms, s = .4) { try { navigator.vibrate && navigator.vibrate(ms); } catch (e) {} rumble(ms, s); }
+function vibP(p) { try { navigator.vibrate && navigator.vibrate(p); } catch (e) {} rumble(p.reduce((a, b) => a + b, 0), 1); }
+
+/* ================= 배경음 ================= */
+let ambTok = 0, ambStops = [];
+function setAmbience(kind) {
+  const tok = ++ambTok;
+  ambStops.forEach(f => f()); ambStops = [];
+  revGain.gain.setTargetAtTime(kind === 'night' || kind === 'yard' ? .3 : .12, T(), .5);
+  if (!kind) return;
+  const every = (fn, min, max) => {
+    const go = () => { if (tok !== ambTok) return; fn(); setTimeout(go, min + Math.random() * (max - min)); };
+    setTimeout(go, Math.random() * max);
+  };
+  const wind = vol => {
+    const s = AC.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+    const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 350;
+    const lfo = AC.createOscillator(); lfo.frequency.value = .08;
+    const lg = AC.createGain(); lg.gain.value = 200; lfo.connect(lg); lg.connect(f.frequency);
+    const g = AC.createGain(); g.gain.value = 0; g.gain.setTargetAtTime(vol, T(), 1);
+    s.connect(f); f.connect(g); g.connect(master); s.start(); lfo.start();
+    ambStops.push(() => { g.gain.setTargetAtTime(0, T(), .4); setTimeout(() => { s.stop(); lfo.stop(); }, 2000); });
+  };
+  const bird = () => { const pan = Math.random() * 1.6 - .8, n = 2 + rand(3), b = 2200 + rand(1500);
+    for (let i = 0; i < n; i++) tone(master, { f0: b, f1: b * 1.35, dur: .07, vol: .03, delay: i * .11, pan }); };
+  if (kind === 'wind' || kind === 'yard') wind(.05);
+  if (kind === 'village') { wind(.03); every(bird, 2500, 6000); }
+  if (kind === 'forest') { wind(.07); every(bird, 5000, 10000);
+    every(() => noise(master, { f0: 700, q: 2, dur: .25, vol: .04, pan: Math.random() * 2 - 1 }), 3000, 7000); }
+  if (kind === 'night') { wind(.05);
+    every(() => tone(master, { f0: 4400, dur: .04, vol: .01, pan: Math.random() * 2 - 1 }), 400, 1000); }
+}
+
+/* ================= 음성 (TTS) ================= */
+let koVoice = null;
+function loadVoices() {
+  const ko = speechSynthesis.getVoices().filter(v => /^ko/i.test(v.lang));
+  koVoice = ko.find(v => /Natural|Online/i.test(v.name)) || ko.find(v => /Google|Yuna|유나/i.test(v.name)) || ko[0] || null;
+}
+if ('speechSynthesis' in window) { speechSynthesis.onvoiceschanged = loadVoices; loadVoices(); }
+const WHO = {
+  narr:     { name: '',            pitch: 1,   rate: 1.05 },
+  elder:    { name: '촌장',        pitch: .55, rate: .9 },
+  girl:     { name: '미나',        pitch: 1.6, rate: 1.12 },
+  merchant: { name: '수상한 상인', pitch: .7,  rate: .92 },
+};
+function say(text, who = 'narr') {
+  return new Promise(res => {
+    const p = WHO[who];
+    $('#who').textContent = p.name; $('#caption').textContent = text;
+    if (!('speechSynthesis' in window)) { setTimeout(res, 800 + text.length * 120); return; }
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ko-KR'; if (koVoice) u.voice = koVoice;
+    u.pitch = p.pitch; u.rate = p.rate;
+    let done = false;
+    const to = setTimeout(() => fin(), 2500 + text.length * 260 / p.rate);
+    function fin() { if (done) return; done = true; clearTimeout(to); res(); }
+    u.onend = fin; u.onerror = fin;
+    speechSynthesis.speak(u);
+  });
+}
+function hush() { if ('speechSynthesis' in window) speechSynthesis.cancel(); }
+function note(text, who = 'narr') { hush(); return say(text, who); }   // 필드 진행 중 짧은 안내
+async function lines(arr) {
+  mode = 'talk';
+  for (const [w, t] of arr) { await say(t, w); await wait(180); }
+}
+
+/* ================= 지도 ================= */
+// # 돌벽  H 집벽  T 나무  F 분수  B 통  ,풀  .돌바닥  ~물웅덩이
+// P 시작점, 소문자/숫자 = 표식(사람·적 위치)
+const SOLID = new Set(['#', 'H', 'T', 'F', 'B']);
+const MAPS = {
+  forest: { floor: ',', amb: 'forest', a: 0, rows: [
+    '##################',
+    '#,,,T,,,,,,T,,,,,#',
+    '#,1,,,,T,,,,,,2,,#',
+    '#,,,,,,,,,T,,,,,,#',
+    '#,T,,,T,,,,,,,T,,#',
+    '#,,,,,,,~~,T,,,,,#',
+    '#,,,T,,,~~,,,,,,,#',
+    '#,,,,,,,,,,,,T,,,#',
+    '#,T,,,,z,,,,,,,,,#',
+    '#,,,,,,,,T,,,,T,,#',
+    '#,,T,,,,,,,,,,,,,#',
+    '#,,,,,,,P,,,,T,,,#',
+    '#,,,,T,,,,,,,,,,,#',
+    '##################'] },
+  gate: { floor: '.', amb: 'night', a: 0, rows: [
+    '################',
+    '#,,,1,,,,,,2,,,#',
+    '#,,,,,,,,,,,,,,#',
+    '#,,B,,,,,,,,B,,#',
+    '#,,,,,,,,,,,,,,#',
+    '#,3,,,,,,,,,,4,#',
+    '#,,,,,,,,,,,,,,#',
+    '#,,,B,,,,,,B,,,#',
+    '#,,,,,,,P,,,,,,#',
+    '#HHHHHH,,HHHHHH#',
+    '################'] },
+};
+
+/* ================= 월드 ================= */
+const P = { x: 0, y: 0, a: 0 };
+const G = { map: null, ents: [], arrows: [], flow: null, flowT: 0, sector: 0, atkCool: 0, caneCool: 0,
+  parryAt: 0, parryCool: 0, dodgeUntil: 0, dodgeCool: 0, check: null, res: null, combat: false };
+
+function tile(x, y) {
+  const m = G.map, i = Math.floor(x), j = Math.floor(y);
+  if (i < 0 || j < 0 || i >= m.w || j >= m.h) return '#';
+  return m.t[i + j * m.w];
+}
+const isSolid = (x, y) => SOLID.has(tile(x, y));
+function canStand(x, y, r) { return !isSolid(x - r, y - r) && !isSolid(x + r, y - r) && !isSolid(x - r, y + r) && !isSolid(x + r, y + r); }
+function los(x0, y0, x1, y1) {
+  const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / .25);
+  for (let i = 1; i < n; i++) { const t = i / n; if (isSolid(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)) return false; }
+  return true;
+}
+function ray(a, max) {
+  const dx = Math.sin(a), dy = -Math.cos(a);
+  for (let d = .1; d <= max; d += .08) {
+    const c = tile(P.x + dx * d, P.y + dy * d);
+    if (SOLID.has(c)) return { d, mat: c === 'T' ? 'soft' : 'hard' };
+  }
+  return null;
+}
+function parseMap(def) {
+  const rows = def.rows, h = rows.length, w = rows[0].length, t = [], marks = {};
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let c = rows[y][x];
+    if (/[a-z0-9P]/.test(c)) { (marks[c] = marks[c] || []).push({ x: x + .5, y: y + .5 }); c = def.floor; }
+    t.push(c);
+  }
+  return { w, h, t, marks, def };
+}
+function clearEnts() { G.ents.forEach(e => { e.stop && e.stop(); e.sp && e.sp.dispose(); }); G.ents = []; }
+function enter(name) {
+  clearEnts();
+  const def = MAPS[name];
+  G.map = parseMap(def);
+  const s = G.map.marks.P[0];
+  P.x = s.x; P.y = s.y; P.a = def.a;
+  G.sector = Math.round(P.a / (Math.PI / 4)); G.combat = false; G.arrows = []; G.dodgeUntil = G.parryAt = 0;
+  setAmbience(def.amb);
+  // 분수 = 계속 흐르는 물소리 (방향의 기준점)
+  const fs = []; G.map.t.forEach((c, i) => { if (c === 'F') fs.push({ x: i % G.map.w + .5, y: Math.floor(i / G.map.w) + .5 }); });
+  if (fs.length) {
+    const e = mkEnt({ x: fs.reduce((a, b) => a + b.x, 0) / fs.length, y: fs.reduce((a, b) => a + b.y, 0) / fs.length, kind: 'fountain' });
+    const src = AC.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+    const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1300; f.Q.value = .6;
+    const g = AC.createGain(); g.gain.value = .22;
+    src.connect(f); f.connect(g); g.connect(e.sp.input); src.start();
+    e.stop = () => { try { src.stop(); } catch (er) {} };
+  }
+  computeFlow(); placeAll();
+}
+function randomFloor(minD) {
+  const m = G.map;
+  for (let k = 0; k < 400; k++) {
+    const x = rand(m.w) + .5, y = rand(m.h) + .5;
+    if (canStand(x, y, .3) && Math.hypot(x - P.x, y - P.y) >= minD) return { x, y };
+  }
+  return { x: P.x, y: P.y - 2 };
+}
+function markPos(key, minD = 4) {
+  const ms = G.map.marks[key];
+  return ms ? ms[rand(ms.length)] : randomFloor(minD);
+}
+
+/* 흐름장: 벽 너머에서 적이 플레이어를 찾아오는 길 */
+const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+function computeFlow() {
+  const { w, h, t } = G.map, D = new Int16Array(w * h).fill(-1);
+  const s = Math.floor(P.x) + Math.floor(P.y) * w, q = [s]; D[s] = 0;
+  for (let qi = 0; qi < q.length; qi++) {
+    const i = q[qi], x = i % w, y = (i / w) | 0;
+    for (const [ax, ay] of N4) {
+      const nx = x + ax, ny = y + ay;
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      const j = nx + ny * w;
+      if (D[j] >= 0 || SOLID.has(t[j])) continue;
+      D[j] = D[i] + 1; q.push(j);
+    }
+  }
+  G.flow = D;
+}
+function flowNext(e) {
+  const w = G.map.w, x = Math.floor(e.x), y = Math.floor(e.y);
+  let bd = G.flow[x + y * w]; if (bd < 0) bd = 1e9;
+  let best = null;
+  for (const [ax, ay] of N4) {
+    const v = G.flow[(x + ax) + (y + ay) * w];
+    if (v >= 0 && v < bd) { bd = v; best = { x: x + ax + .5, y: y + ay + .5 }; }
+  }
+  return best;
+}
+
+/* ================= 엔티티 ================= */
+function mkEnt(o) {
+  const e = Object.assign({ vt: Math.random() * 1.5, sp: new Spatial(), d: 99, rel: 0 }, o);
+  G.ents.push(e); return e;
+}
+function place(e) {
+  const dx = e.x - P.x, dy = e.y - P.y;
+  e.d = Math.hypot(dx, dy);
+  e.rel = normA(Math.atan2(dx, -dy) - P.a);
+  e.sp.set(e.rel, e.d, !los(P.x, P.y, e.x, e.y));
+}
+function placeAll() { G.ents.forEach(e => { if (e.state !== 'dead') place(e); }); }
+
+const TYPES = {
+  wolf:   { name: '늑대', hp: 2, ac: 4, dmg: 1, speed: 1.7, reach: .95, windup: .55, recover: .8, stepDist: .6, voiceEvery: 1.5,
+            voice: d => Math.random() < .2 ? SFX.howl(d) : SFX.growl(d), step: SFX.paw, windupSnd: SFX.snarl, attackSnd: SFX.bite,
+            hurt: SFX.yelp, die: d => { SFX.yelp(d); setTimeout(() => SFX.yelp(d), 280); } },
+  goblin: { name: '고블린', hp: 1, ac: 6, dmg: 1, speed: 2.0, reach: .9, windup: .45, recover: .7, stepDist: .45, voiceEvery: 1.1, jitter: .7,
+            voice: SFX.goblin, step: SFX.patter, windupSnd: SFX.cackle, attackSnd: SFX.slash, hurt: SFX.goblinHurt, die: SFX.goblinHurt },
+  ogre:   { name: '오우거', hp: 4, ac: 8, dmg: 2, speed: 1.0, reach: 1.3, windup: 1.1, recover: .6, stepDist: .8, voiceEvery: 3,
+            voice: SFX.roar, step: SFX.heavy, windupSnd: SFX.inhale, attackSnd: SFX.smash, hurt: SFX.ogreHurt,
+            die: d => { SFX.roar(d); setTimeout(() => SFX.smash(d), 900); } },
+  // 활잡이: 멀리서 멈춰 활시위를 당긴다(끼이익) → 팅! → 화살. 피하기로 흘린다. 가까이 오면 단검.
+  archer: { name: '활잡이', ai: 'archer', hp: 1, ac: 5, dmg: 1, speed: 1.1, reach: .9, windup: .6, recover: .8, stepDist: .5, voiceEvery: 2.2, shotCool: 1.5,
+            voice: SFX.quiver, step: SFX.patter, windupSnd: SFX.lunge, attackSnd: SFX.slash, hurt: SFX.goblinHurt, die: SFX.goblinHurt },
+  // 암살자: 발소리 없이 숨소리만. 바로 앞에서 숨을 들이켜고(휙) 찌른다. 찌른 뒤엔 사라졌다 다른 곳에서 다시.
+  assassin: { name: '암살자', ai: 'assassin', hp: 1, ac: 5, dmg: 2, speed: .8, reach: 1.0, windup: .5, recover: .6, stepDist: 99, voiceEvery: 1.7,
+            voice: SFX.breath, step: () => {}, windupSnd: SFX.lunge, attackSnd: SFX.stab, hurt: SFX.goblinHurt, die: d => { SFX.goblinHurt(d); SFX.vanish(d); } },
+  // 박쥐: 내 주위를 빙빙 돈다. 끼익 울며 멈추면 곧 덮친다.
+  bat:    { name: '박쥐', ai: 'bat', hp: 1, ac: 3, dmg: 1, reach: 1.7, windup: .7, recover: .5, voiceEvery: .22,
+            voice: SFX.flutter, windupSnd: SFX.screech, attackSnd: SFX.bite, hurt: SFX.squeak, die: SFX.squeak },
+};
+function spawn(type, pos, extra) {
+  const b = TYPES[type];
+  return mkEnt(Object.assign({ ...b, type, x: pos.x, y: pos.y, enemy: true, state: 'chase', t: 0, stepAcc: 0, seed: Math.random() * 10,
+    orb: Math.random() * TAU, w: (Math.random() < .5 ? -1 : 1) * 1.5, dive: 2.5 + Math.random() * 2 }, extra || {}));
+}
+const aliveEnemies = () => G.ents.filter(e => e.enemy && e.state !== 'dead').length;
+
+function moveEnt(e, dx, dy) {
+  const stuck = !canStand(e.x, e.y, .3);   // 벽에 끼었으면 빠져나오게 허용
+  const ok = (x, y) => (stuck || canStand(x, y, .3)) && Math.hypot(x - P.x, y - P.y) >= .6;
+  if (dx && ok(e.x + dx, e.y)) e.x += dx;
+  if (dy && ok(e.x, e.y + dy)) e.y += dy;
+}
+function chase(e, dt) {
+  let tx = P.x, ty = P.y;
+  if (!los(e.x, e.y, P.x, P.y)) { const n = flowNext(e); if (n) { tx = n.x; ty = n.y; } }
+  const L = Math.hypot(tx - e.x, ty - e.y) || 1;
+  let vx = (tx - e.x) / L, vy = (ty - e.y) / L;
+  if (e.jitter) { e.jt = (e.jt || 0) + dt; const s = Math.sin(e.jt * 3 + e.seed) * e.jitter; [vx, vy] = [vx - vy * s, vy + vx * s]; }
+  const bx = e.x, by = e.y, sp = e.speed * dt;
+  moveEnt(e, vx * sp, vy * sp);
+  e.stepAcc += Math.hypot(e.x - bx, e.y - by);
+  if (e.stepAcc >= e.stepDist) { e.stepAcc = 0; e.step(e.sp.input); }
+}
+const TELL = .28;       // 공격 직전 "쨍" 소리 → 이 순간부터 타격까지가 받아치기 타이밍
+const PARRY_MS = 380;
+function startWindup(e) { e.state = 'windup'; e.t = e.windup; e.windupSnd(e.sp.input); }
+function orbit(e, dt) {   // 박쥐: 플레이어 주위를 돈다
+  if (Math.random() < dt * .15) e.w = -e.w;
+  e.orb += e.w * dt;
+  const tx = P.x + Math.sin(e.orb) * 1.3, ty = P.y - Math.cos(e.orb) * 1.3, k = Math.min(1, dt * 4);
+  e.x += (tx - e.x) * k; e.y += (ty - e.y) * k;
+}
+function enemyAI(e, dt) {
+  if (e.shotCool > 0) e.shotCool -= dt;
+  switch (e.state) {
+    case 'stagger': {
+      e.t -= dt;
+      if (e.ai === 'bat') orbit(e, dt);
+      else { const dx = e.x - P.x, dy = e.y - P.y, L = Math.hypot(dx, dy) || 1; moveEnt(e, dx / L * 1.4 * dt, dy / L * 1.4 * dt); }
+      if (e.t <= 0) {
+        e.state = 'chase';
+        if (e.ai === 'assassin') { SFX.vanish(e.sp.input); const np = randomFloor(4); e.x = np.x; e.y = np.y; e.vt = 2; }
+      }
+      return;
+    }
+    case 'windup': {
+      const before = e.t; e.t -= dt;
+      if (before > TELL && e.t <= TELL) SFX.tell(e.sp.input);
+      if (e.t <= 0) strike(e);
+      return;
+    }
+    case 'draw':
+      e.t -= dt;
+      if (e.t <= 0) shoot(e);
+      return;
+    case 'chase':
+      if (e.ai === 'bat') { orbit(e, dt); e.dive -= dt; if (e.dive <= 0) { e.dive = 2.5 + Math.random() * 2; startWindup(e); } return; }
+      if (e.d <= e.reach) { startWindup(e); return; }
+      if (e.ai === 'archer' && e.shotCool <= 0 && e.d > 2.4 && e.d < 9 && los(e.x, e.y, P.x, P.y)) { e.state = 'draw'; e.t = 1.1; SFX.bowDraw(e.sp.input); return; }
+      chase(e, dt);
+  }
+}
+function strike(e) {
+  e.state = 'stagger'; e.t = e.recover;
+  if (e.d > e.reach + .35) { SFX.whiff(e.sp.input); return; }
+  if (performance.now() - G.parryAt < PARRY_MS && Math.abs(e.rel) < 1.3) { parried(e); return; }
+  e.attackSnd(e.sp.input);
+  hurtPlayer(e);
+}
+function parried(e) {   // 받아치기 성공 → 주사위 없이 반격
+  G.parryAt = 0;
+  SFX.parry(); vibP([20, 30, 70]); flashColor('#c9a45c');
+  setTimeout(() => { SFX.hit(e.sp.input); e.hurt(e.sp.input); }, 90);
+  e.hp -= 1 + state.parryBonus;
+  if (e.hp <= 0) { kill(e); return; }
+  e.state = 'stagger'; e.t = e.recover + .8;
+}
+function shoot(e) {
+  SFX.twang(e.sp.input);
+  e.state = 'chase'; e.shotCool = 2.8 + Math.random() * 1.5;
+  const t = .25 + e.d / 11;
+  SFX.arrowFly(oneShot(e.rel, e.d * .5), t);
+  G.arrows.push({ t, rel: e.rel });
+}
+function updArrows(dt) {
+  for (const a of G.arrows) {
+    a.t -= dt; if (a.t > 0) continue;
+    if (performance.now() < G.dodgeUntil) { SFX.arrowPass(Math.sin(a.rel)); vib(10); }
+    else { SFX.arrowHit(); hurtPlayer({ dmg: 1 }); }
+  }
+  G.arrows = G.arrows.filter(a => a.t > 0);
+}
+function hurtPlayer(e) {
+  if (performance.now() < G.dodgeUntil) { SFX.whiff(bus); vib(10); return; }   // 피하는 중
+  state.hp -= e.dmg; updateHUD();
+  SFX.hurt(); flash(); vibP([90, 40, 160]);
+  if (state.hp > 0 && state.hp <= 2) note(`체력 ${state.hp}.`);
+}
+function kill(e) {
+  e.state = 'dead';
+  e.die(e.sp.input); vib(60, .8);
+  e.sp.dispose();
+  setTimeout(() => { G.ents = G.ents.filter(x => x !== e); }, 100);
+}
+
+/* ================= 플레이어 행동 ================= */
+async function playerAttack() {
+  const now = performance.now(); if (now < G.atkCool) return;
+  G.atkCool = now + 450;
+  SFX.swing(); vib(12);
+  let tgt = null;
+  for (const e of G.ents) if (e.enemy && e.state !== 'dead' && e.d <= 1.7 && Math.abs(e.rel) <= FRONT + .05 && (!tgt || e.d < tgt.d)) tgt = e;
+  if (!tgt) return;
+  const roll = d20(); SFX.dice(); await wait(300);
+  if (tgt.state === 'dead' || mode !== 'field') return;
+  if (roll === 1 || roll + state.atk < tgt.ac) { SFX.clang(); vib(20); return; }
+  const dmg = roll === 20 ? 2 : 1;
+  SFX.hit(tgt.sp.input); setTimeout(() => tgt.hurt(tgt.sp.input), 120); vib(45, .9);
+  tgt.hp -= dmg;
+  if (roll === 20) note('크리티컬!');
+  if (tgt.hp <= 0) { kill(tgt); return; }
+  tgt.state = 'stagger'; tgt.t = .6;   // 맞으면 공격이 끊기고 뒤로 밀린다
+}
+function parry() {       // 칼을 세워 받아칠 준비 — "쨍" 소리에 맞춰야 한다
+  const now = performance.now(); if (now < G.parryCool) return;
+  G.parryCool = now + 550; G.parryAt = now;
+  SFX.grip(); vib(8, .2);
+}
+function dodge() {       // 옆으로 구르기 — 잠깐 동안 공격·화살을 흘린다
+  const now = performance.now(); if (now < G.dodgeCool) return;
+  G.dodgeCool = now + 900; G.dodgeUntil = now + 600;
+  SFX.dodge(); vib(25, .5);
+}
+function useCane() {     // 지팡이: 벽은 딱딱한 메아리, 적은 둔탁한 메아리. 늦게 돌아올수록 멀다.
+  const now = performance.now(); if (now < G.caneCool) return;
+  G.caneCool = now + 400;
+  SFX.cane(); vib(10);
+  for (let k = 0; k < 8; k++) {
+    const rel = normA(k * Math.PI / 4), hit = ray(P.a + rel, 8);
+    if (hit) SFX.echo(oneShot(rel, hit.d), hit.mat, k === 0, .1 + hit.d * .075);
+  }
+  for (const e of G.ents) if (e.enemy && e.state !== 'dead' && e.d < 8) SFX.thud(oneShot(e.rel, e.d * .7), .1 + e.d * .075);
+}
+
+/* ================= 메인 루프 ================= */
+const inp = { keyT: 0, touchT: 0, padT: 0 };
+// 깨어 있는 적이 가까이 오면 칼이 울린다
+function updCombat() {
+  const now = G.ents.some(e => e.enemy && e.state !== 'dead' && e.d < 9);
+  if (now === G.combat) return;
+  G.combat = now;
+  if (now) { SFX.alarm(); vibP([30, 50, 30, 50, 60]); } else { SFX.sheathe(); vib(15); }
+}
+// 제자리에 서서 몸만 돈다. 적이 다가온다.
+function updPlayer(dt) {
+  const tr = clamp(inp.keyT + inp.touchT + inp.padT, -1, 1);
+  if (tr) P.a = normA(P.a + tr * 2.4 * dt);
+  // 45도마다 딸깍
+  const sec = Math.round(P.a / (Math.PI / 4));
+  if (sec !== G.sector) { G.sector = sec; SFX.tick(); vib(6, .15); }
+}
+function updEnts(dt) {
+  for (const e of G.ents) {
+    if (e.state === 'dead') continue;
+    place(e);
+    if (e.voice && e.state !== 'windup' && e.state !== 'draw') { e.vt -= dt; if (e.vt <= 0) { e.vt = e.voiceEvery * (.75 + Math.random() * .5); e.voice(e.sp.input); } }
+    if (e.update) e.update(e, dt);
+    if (e.enemy) enemyAI(e, dt);
+  }
+}
+function until(check) {
+  return new Promise(res => { G.check = check; G.res = res; mode = 'field'; });
+}
+let lastT = 0;
+function loop(t) {
+  requestAnimationFrame(loop);
+  const dt = Math.min(.05, (t - lastT) / 1000 || 0); lastT = t;
+  pollPad();
+  if (mode === 'field' && G.map) {
+    updPlayer(dt);
+    G.flowT -= dt; if (G.flowT <= 0) { G.flowT = .3; computeFlow(); }
+    updEnts(dt);
+    updArrows(dt);
+    updCombat();
+    if (G.res) {
+      const r = state.hp <= 0 ? 'dead' : G.check && G.check();
+      if (r) { const res = G.res; G.res = G.check = null; mode = 'talk'; res(r); }
+    }
+  }
+  drawView();
+}
+setInterval(() => { if (mode === 'field' && state.hp > 0 && state.hp <= 2) { SFX.heartbeat(); vib(20, .3); } }, 1100);
+
+/* ================= 전투 진행 ================= */
+async function deathSeq() {
+  SFX.death(); vibP([400]);
+  await lines([['narr', '쓰러졌습니다. 다시 한 번.']]);
+  state.hp = state.maxHp; updateHUD();
+}
+// 적 무리를 차례로 상대. 죽으면 그 무리부터 다시.
+async function combatArea(map, waves) {
+  enter(map);
+  for (let w = 0; w < waves.length;) {
+    const wv = waves[w];
+    state.wave = `${w + 1}/${waves.length}`; updateHUD();
+    if (wv.say) await lines([['narr', typeof wv.say === 'function' ? wv.say() : wv.say]]);
+    wv.spawn();
+    const r = await until(() => aliveEnemies() === 0 ? 'clear' : null);
+    if (r === 'dead') { await deathSeq(); enter(map); continue; }
+    w++;
+  }
+}
+let touchUser = false;
+const hint = (touch, key) => touchUser ? touch : key;
+
+async function game() {
+  resetState(); clearEnts(); G.map = null;
+  await combatArea('forest', [
+    { say: () => hint('늑대가 다가옵니다. 쨍 소리에 맞춰 둘째 손가락을 대면 받아칩니다.', '늑대가 다가옵니다. 쨍 소리에 맞춰 위쪽 화살표를 누르면 받아칩니다.'),
+      spawn: () => spawn('wolf', markPos('1')) },
+    { say: '두 마리가 더 옵니다.', spawn: () => { spawn('wolf', markPos('1')); spawn('wolf', markPos('2')); } },
+    { say: '날갯짓 소리. 박쥐가 주위를 돕니다. 끼익 울음이 들리면 그쪽으로 도세요.', spawn: () => spawn('bat', markPos('2')) },
+  ]);
+  state.hp = state.maxHp; updateHUD();
+  await combatArea('gate', [
+    { say: '밤. 고블린이 몰려옵니다.', spawn: () => { spawn('goblin', markPos('1')); spawn('goblin', markPos('2')); } },
+    { say: () => hint('활잡이입니다. 끼이익 활시위 소리 끝에 팅! 하면 둘째 손가락을 아래로 쓸어 피하세요.', '활잡이입니다. 끼이익 활시위 소리 끝에 팅! 하면 아래쪽 화살표로 피하세요.'),
+      spawn: () => { spawn('archer', markPos('1')); spawn('goblin', markPos('4')); } },
+    { say: () => hint('조용해졌습니다... 숨소리를 들으세요. 화면을 톡 치면 지팡이 메아리로 위치를 알 수 있습니다.', '조용해졌습니다... 숨소리를 들으세요. 씨 키로 지팡이를 두드리면 메아리로 위치를 알 수 있습니다.'),
+      spawn: () => spawn('assassin', markPos('2')) },
+    { say: '박쥐와 활잡이가 함께 옵니다.', spawn: () => { spawn('bat', markPos('3')); spawn('archer', markPos('2')); } },
+    { say: '땅이 울립니다. 오우거입니다! 숨을 크게 들이쉰 뒤 쨍 소리에 받아치세요.', spawn: () => spawn('ogre', markPos('1')) },
+  ]);
+  clearEnts(); state.wave = ''; updateHUD();
+  setAmbience('village'); SFX.fanfare(); vibP([100, 80, 100, 80, 300]); await wait(1500);
+  await lines([['narr', '승리했습니다.']]);
+  mode = 'end';
+  await say('화면을 누르거나 아무 키나 누르면 다시 시작합니다.');
+}
+
+/* ================= 화면 ================= */
+function updateHUD() {
+  $('#hearts').textContent = '♥'.repeat(Math.max(0, state.hp)) + '♡'.repeat(Math.max(0, state.maxHp - state.hp));
+  $('#wave').textContent = state.wave;
+}
+function flashColor(c) { const f = $('#flash'); f.style.background = c; f.style.opacity = .35; setTimeout(() => { f.style.opacity = 0; setTimeout(() => f.style.background = '', 400); }, 120); }
+function flash() { const f = $('#flash'); f.style.opacity = .45; setTimeout(() => f.style.opacity = 0, 120); }
+let showView = false;
+function drawView() {
+  const st = $('#stance');
+  const label = mode !== 'field' ? '' : joy && joy.anchor ? '쓸기 베기 · ↓ 피하기 · 대기 받아치기' : '왼쪽·오른쪽 눌러 회전 · 톡 지팡이';
+  if (st.textContent !== label) { st.textContent = label; st.className = joy && joy.anchor ? 'grip' : G.combat ? 'fight' : ''; }
+  if (!showView || !G.map) return;
+  const cv = $('#view'), g = cv.getContext('2d'), m = G.map, s = Math.floor(240 / Math.max(m.w, m.h));
+  cv.width = m.w * s; cv.height = m.h * s;
+  const col = { '#': '#333', H: '#4a3b2a', T: '#1f4a2a', F: '#1f3f5a', B: '#5a4a2a' };
+  for (let i = 0; i < m.t.length; i++) { const c = col[m.t[i]]; if (c) { g.fillStyle = c; g.fillRect((i % m.w) * s, Math.floor(i / m.w) * s, s, s); } }
+  for (const e of G.ents) {
+    if (e.state === 'dead') continue;
+    g.fillStyle = e.enemy ? '#d04030' : '#4aa0d0';
+    g.beginPath(); g.arc(e.x * s, e.y * s, s * .35, 0, 7); g.fill();
+  }
+  g.save(); g.translate(P.x * s, P.y * s); g.rotate(P.a);
+  g.fillStyle = '#fff'; g.beginPath(); g.moveTo(0, -s * .5); g.lineTo(-s * .3, s * .3); g.lineTo(s * .3, s * .3); g.fill();
+  g.restore();
+}
+
+/* ================= 입력 ================= */
+let wakeLock = null;
+async function keepAwake() { try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && mode !== 'title') keepAwake(); });
+
+function start() {
+  if (mode !== 'title' && mode !== 'end') return;
+  if (!AC) { initAudio(); requestAnimationFrame(loop); }
+  AC.resume(); keepAwake();
+  $('#title').style.display = 'none'; $('#play').style.display = ''; $('#keys').style.display = 'none';
+  mode = 'talk';
+  game();
+}
+
+// 키보드: ←→ 회전, Space 베기
+const held = new Set();
+function syncKeys() {
+  inp.keyT = (held.has('arrowright') || held.has('d') ? 1 : 0) - (held.has('arrowleft') || held.has('a') ? 1 : 0);
+}
+window.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const k = e.key.toLowerCase();
+  if (k === 'v') { showView = !showView; $('#view').style.display = showView ? 'block' : 'none'; return; }
+  if (mode === 'title' || mode === 'end') { e.preventDefault(); start(); return; }
+  if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown', ' ', 'enter'].includes(k)) e.preventDefault();
+  touchUser = false;
+  held.add(k); syncKeys();
+  if (e.repeat) return;
+  if (mode === 'talk' && (k === ' ' || k === 'enter')) hush();
+  else if (mode === 'field') {
+    if (k === ' ') playerAttack();
+    else if (k === 'arrowup' || k === 'w' || k === 'z') parry();
+    else if (k === 'arrowdown' || k === 's' || k === 'x') dodge();
+    else if (k === 'c') useCane();
+  }
+});
+window.addEventListener('keyup', e => { held.delete(e.key.toLowerCase()); syncKeys(); });
+window.addEventListener('blur', () => { held.clear(); syncKeys(); });
+$('#start').addEventListener('click', start);
+
+/* 터치
+   첫 손가락: 화면 왼쪽을 누르고 있으면 왼쪽으로, 오른쪽이면 오른쪽으로 계속 돈다. 짧게 톡 = 지팡이.
+   첫 손가락을 누른 채 둘째 손가락을 대면 회전이 멈추고 칼을 세운다(= 받아치기 자세).
+   둘째 손가락으로 쓸면 베기, 아래로 쓸면 옆으로 구르기. */
+let joy = null;                 // 첫 손가락
+const gest = new Map();         // 둘째 이후 손가락
+const SWIPE_D = 40, TURN_DELAY = 150;
+window.addEventListener('touchstart', e => {
+  e.preventDefault();
+  touchUser = true;
+  for (const t of e.changedTouches) {
+    if (mode === 'title' || mode === 'end') {
+      try { document.documentElement.requestFullscreen().catch(() => {}); } catch (er) {}
+      start(); return;
+    }
+    if (mode === 'talk') { hush(); continue; }
+    if (mode !== 'field') continue;
+    if (!joy) {
+      const j = joy = { id: t.identifier, side: t.clientX < innerWidth / 2 ? -1 : 1, anchor: false, turning: false };
+      j.tm = setTimeout(() => { if (joy === j && !j.anchor) { j.turning = true; inp.touchT = j.side; } }, TURN_DELAY);
+      vib(8, .2);
+      continue;
+    }
+    // 둘째 손가락: 회전을 멈추고 칼을 세운다
+    if (!joy.anchor) { joy.anchor = true; clearTimeout(joy.tm); inp.touchT = 0; }
+    parry();
+    gest.set(t.identifier, { x0: t.clientX, y0: t.clientY, done: false });
+  }
+}, { passive: false });
+window.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    const g = gest.get(t.identifier); if (!g || g.done || mode !== 'field') continue;
+    const dx = t.clientX - g.x0, dy = t.clientY - g.y0;
+    if (Math.hypot(dx, dy) < SWIPE_D) continue;
+    g.done = true;
+    if (dy > 0 && dy > Math.abs(dx)) dodge();        // 아래로 쓸기 = 피하기
+    else { SFX.draw(); playerAttack(); }              // 그 밖 = 베기
+  }
+}, { passive: false });
+function touchEnd(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (joy && t.identifier === joy.id) {
+      clearTimeout(joy.tm);
+      if (!joy.turning && !joy.anchor && mode === 'field') useCane();   // 톡 = 지팡이
+      joy = null; inp.touchT = 0;
+      continue;
+    }
+    gest.delete(t.identifier);
+  }
+}
+window.addEventListener('touchend', touchEnd, { passive: false });
+window.addEventListener('touchcancel', touchEnd, { passive: false });
+
+// 게임패드: 스틱/십자키 회전, A 베기, X 받아치기, B/LB/RB 피하기, Y 지팡이
+const padPrev = [];
+function pollPad() {
+  const gps = navigator.getGamepads ? navigator.getGamepads() : [];
+  PAD = null; for (const g of gps) if (g) { PAD = g; break; }
+  if (!PAD) { inp.padT = 0; return; }
+  const dz = v => Math.abs(v) < .22 ? 0 : v;
+  const lx = dz(PAD.axes[0] || 0), rx = dz(PAD.axes[2] || 0);
+  const btn = i => !!(PAD.buttons[i] && PAD.buttons[i].pressed);
+  inp.padT = (lx || rx) + (btn(15) ? 1 : 0) - (btn(14) ? 1 : 0);
+  for (let i = 0; i < 17; i++) {
+    const p = btn(i), edge = p && !padPrev[i]; padPrev[i] = p;
+    if (!edge) continue;
+    if (mode === 'title' || mode === 'end') { start(); return; }
+    if (mode === 'talk' && i === 0) hush();
+    else if (mode === 'field') ({ 0: playerAttack, 1: dodge, 2: parry, 3: useCane, 4: dodge, 5: dodge }[i] || (() => {}))();
+  }
+}
+// 패드는 버튼을 눌러야 연결이 잡히므로 타이틀에서도 확인
+(function titlePad() { if (mode === 'title' || mode === 'end') { if (!AC) pollPad(); requestAnimationFrame(titlePad); } })();
+</script>
+</body>
+</html>
